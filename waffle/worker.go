@@ -233,7 +233,6 @@ func (w *Worker) register() os.Error {
 
 func (w *Worker) Healthcheck(args *BasicMasterMsg, resp *Resp) os.Error {
 	*resp = OK
-	w.logger.Printf("healthcheck")
 	return nil
 }
 
