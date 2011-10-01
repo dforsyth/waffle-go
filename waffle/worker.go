@@ -311,11 +311,9 @@ func (w *Worker) addToPartition(v Vertex) os.Error {
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
 	wid := w.pmap[pid]
-	w.logger.Printf("Adding %s to pid %d", v.VertexId(), pid)
 	if wid == w.wid {
 		w.parts[pid].addVertex(v)
 	} else {
-		w.logger.Printf("Adding %s to voutq", v.VertexId())
 		w.voutq.addVertex(v)
 	}
 	return nil

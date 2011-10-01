@@ -2,9 +2,6 @@ package waffle
 
 import (
 	"os"
-	//"bytes"
-	//"gob"
-	//"fmt"
 )
 
 type VertexQ interface {
