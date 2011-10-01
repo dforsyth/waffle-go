@@ -1,0 +1,30 @@
+Waffle is a distributed graph processing framework based on Google's Pregel
+paper.
+
+The base distribution for Waffle is barebones.  For some useful addons check
+out www.github.com/dforsyth/syrup.
+
+STATUS:
+	Currently Waffle jobs must be manually deployed and started.
+
+NOTE:
+	Waffle is not production ready and is under heavy development.  I have no
+	intention of maintaining a backwards compatible API at this point, so use
+	at your own risk!
+
+TODO:
+	Better errors/error handling (or any error handling for that matter)
+	Combiners
+	Aggregators
+	Add/Remove vertices and edges
+	Deployment utilities
+	Documentation
+	Default server in package
+	RPC interface, RPC re-work
+	Barriers/cluster coordination level?
+	Monitoring/web interface
+	Fault tolerance
+	Duplicate code
+	Mesos?
+	Streaming?
+
