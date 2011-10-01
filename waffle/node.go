@@ -21,16 +21,24 @@ type node struct {
 	partFn func(string) uint64
 }
 
+func (n *node) Addr() string {
+	return n.addr
+}
+
+func (n *node) Port() string {
+	return n.port
+}
+
 func dumbHashFn(id string) uint64 {
 	var sum uint64 = 0
 	for _, c := range id {
 		sum += uint64(c)
 	}
-	return sum // % uint64(len(n.pmap))
+	return sum
 }
 
 func (n *node) getPartitionOf(id string) uint64 {
-	return n.partFn(id)
+	return n.partFn(id) % uint64(len(n.pmap))
 }
 
 func (n *node) InitNode(addr, port string) {

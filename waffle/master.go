@@ -362,7 +362,7 @@ func (m *Master) compute() os.Error {
 	m.logger.Printf("Starting computation")
 
 	m.logger.Printf("Active verts = %d", m.activeVerts)
-	for m.superstep = 0; m.activeVerts > 0; m.superstep++ {
+	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		m.prepareWorkers()
 		m.execStep()

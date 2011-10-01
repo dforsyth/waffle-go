@@ -95,7 +95,7 @@ func (w *Worker) RegisterVertex(v Vertex) {
 	gob.Register(v)
 }
 
-func (w *Worker) RegisterMessage(m Msg) {
+func (w *Worker) RegisterMsg(m Msg) {
 	gob.Register(m)
 }
 
