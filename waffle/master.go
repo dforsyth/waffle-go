@@ -28,11 +28,8 @@ type Master struct {
 	state             int
 	regch             chan byte
 	loadch            chan interface{}
-	loading           map[string]interface{}
 	workch            chan interface{}
-	working           map[string]interface{}
 	writech           chan interface{}
-	writing           map[string]interface{}
 	preparech         chan interface{}
 	minWorkers        uint64
 	registerWait      int64
@@ -60,16 +57,14 @@ const (
 )
 
 // For now, this is the barrier that the workers "enter" for sync
-func barrierOnIdMap(m map[string]interface{}, ch chan interface{}) {
-	if len(m) == 0 {
-		return
-	}
+func (m *Master) barrier(ch chan interface{}) {
+	bmap := make(map[string]interface{})
 	for e := range ch {
 		switch t := e.(type) {
 		case string:
-			m[t] = nil, false
+			bmap[t] = nil
 		}
-		if len(m) == 0 {
+		if len(bmap) == len(m.wmap) {
 			return
 		}
 	}
@@ -81,11 +76,8 @@ func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, regi
 		regch:             make(chan byte, 1),
 		as:                make(chan byte, 1),
 		loadch:            make(chan interface{}),
-		loading:           make(map[string]interface{}),
 		workch:            make(chan interface{}),
-		working:           make(map[string]interface{}),
 		writech:           make(chan interface{}),
-		writing:           make(map[string]interface{}),
 		preparech:         make(chan interface{}),
 		logger:            log.New(os.Stdout, "(master)["+net.JoinHostPort(addr, port)+"]["+jobId+"]: ", 0),
 		minWorkers:        minWorkers,
@@ -243,31 +235,30 @@ func (m *Master) determinePartitions() {
 	// Should be a seperate function/phase
 	m.logger.Printf("Distributing worker and partition info")
 
-	// XXX This is really not how topology should be distributed.  It might be better to have each worke
-	dist := make(map[string]interface{})
+	// XXX This is really not how topology should be distributed.  It might be better to have each worker download
+	// a file from some location
 	distch := make(chan interface{})
 	tm := &ClusterInfoMsg{}
 	tm.JobId = m.jobId
 	tm.Pmap = m.pmap
 	tm.Wmap = m.wmap
-	if e := m.sendToAllWorkers("Worker.WorkerInfo", tm, dist, distch); e != nil {
+	if e := m.sendToAllWorkers("Worker.WorkerInfo", tm, distch); e != nil {
 		panic(e.String())
 	}
-	barrierOnIdMap(dist, distch)
+	m.barrier(distch)
 
 	m.logger.Printf("Done distributing worker and partition info")
 }
 
 // Send a message to all of the workers we know of, using waitMap as our sync map.  If waitCh isn't nil, send the worker id on it
 // once the rpc call is complete.
-func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitMap map[string]interface{}, waitCh chan interface{}) os.Error {
+func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interface{}) os.Error {
 	for id, _ := range m.wmap {
 		wid := id
 		cl, e := m.cl(wid)
 		if e != nil {
 			return e
 		}
-		waitMap[wid] = nil
 		go func() {
 			var r Resp
 			if e := cl.Call(call, msg, &r); e != nil {
@@ -289,10 +280,10 @@ func (m *Master) initialDataLoad() os.Error {
 	m.logger.Printf("Instructing workers to do first phase of data load")
 
 	lm := &BasicMasterMsg{JobId: m.jobId}
-	if e := m.sendToAllWorkers("Worker.DataLoad", lm, m.loading, nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.DataLoad", lm, nil); e != nil {
 		panic(e.String())
 	}
-	barrierOnIdMap(m.loading, m.loadch)
+	m.barrier(m.loadch)
 
 	m.logger.Printf("Done first phase of data load")
 	return nil
@@ -308,10 +299,10 @@ func (m *Master) secondaryDataLoad() os.Error {
 	m.logger.Printf("Instructing workers to do second phase of data load")
 
 	lm := &BasicMasterMsg{JobId: m.jobId}
-	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", lm, m.loading, nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", lm, nil); e != nil {
 		panic(e.String())
 	}
-	barrierOnIdMap(m.loading, m.loadch)
+	m.barrier(m.loadch)
 
 	m.logger.Printf("Done second phase of data load")
 	return nil
@@ -336,10 +327,11 @@ func (m *Master) handleActiveInfoUpdate(msg *WorkerInfoMsg, ch chan interface{})
 func (m *Master) completeJob() os.Error {
 	m.logger.Printf("Instructing workers to write results")
 	wr := &BasicMasterMsg{JobId: m.jobId}
-	if e := m.sendToAllWorkers("Worker.WriteResults", wr, m.writing, nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.WriteResults", wr, nil); e != nil {
 		panic(e.String())
 	}
-	barrierOnIdMap(m.writing, m.writech)
+	m.barrier(m.writech)
+
 	m.logger.Printf("Workers have written")
 	return nil
 }
@@ -351,7 +343,7 @@ func (m *Master) NotifyWriteResultsComplete(args *WorkerInfoMsg, resp *Resp) os.
 }
 
 func (m *Master) endWorkers() os.Error {
-	if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.jobId}, make(map[string]interface{}), nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.jobId}, nil); e != nil {
 		panic(e.String())
 	}
 	// don't wait for a notify on this call	
@@ -383,11 +375,11 @@ func (m *Master) compute() os.Error {
 func (m *Master) prepareWorkers() os.Error {
 	var msg BasicMasterMsg
 	msg.JobId = m.jobId
-	prepare := make(map[string]interface{})
-	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", &msg, prepare, nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", &msg, nil); e != nil {
 		panic(e.String())
 	}
-	barrierOnIdMap(prepare, m.preparech)
+	m.barrier(m.preparech)
+
 	return nil
 }
 
@@ -409,7 +401,6 @@ func (m *Master) execStep() os.Error {
 		if e != nil {
 			panic(e.String())
 		}
-		m.working[wid] = nil
 		go func() {
 			var r Resp
 			if e := cl.Call("Worker.Superstep", sm, &r); e != nil {
@@ -420,7 +411,8 @@ func (m *Master) execStep() os.Error {
 			}
 		}()
 	}
-	barrierOnIdMap(m.working, m.workch)
+	m.barrier(m.workch)
+
 	return nil
 }
 
