@@ -24,19 +24,20 @@ func newWorkerInfo() *workerInfo {
 
 type Master struct {
 	node
-	jobId             string
-	state             int
-	regch             chan byte
-	loadch            chan interface{}
-	workch            chan interface{}
-	writech           chan interface{}
-	preparech         chan interface{}
-	minWorkers        uint64
-	registerWait      int64
-	superstep         uint64
-	partsPerWorker    uint64
-	heartbeatInterval int64
-	heartbeatTimeout  int64
+	jobId              string
+	state              int
+	regch              chan byte
+	loadch             chan interface{}
+	workch             chan interface{}
+	writech            chan interface{}
+	preparech          chan interface{}
+	minWorkers         uint64
+	registerWait       int64
+	superstep          uint64
+	partsPerWorker     uint64
+	heartbeatInterval  int64
+	heartbeatTimeout   int64
+	startTime, endTime int64
 
 	wInfo map[string]*workerInfo
 
@@ -140,6 +141,8 @@ func (m *Master) SetPartitionsPerWorker(partsPerWorker uint64) {
 func (m *Master) prepare() os.Error {
 	// XXX Registration
 	m.registerWorkers()
+
+	m.startTime = time.Seconds()
 	m.determinePartitions()
 
 	// Loading is a two step process: first we do the initial load by worker,
@@ -426,6 +429,7 @@ func (m *Master) NotifyStepComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
 func (m *Master) finish() os.Error {
 	m.completeJob()
 	// m.releaseWorkers()
+	m.endTime = time.Seconds()
 	return nil
 }
 
@@ -435,4 +439,6 @@ func (m *Master) Run() {
 	m.compute()
 	m.finish()
 	m.logger.Printf("Done")
+
+	m.logger.Printf("Job run time (post registration) was %d seconds", m.endTime-m.startTime)
 }
