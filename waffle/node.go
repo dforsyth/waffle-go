@@ -19,6 +19,7 @@ type node struct {
 	wmap   map[string]string      // worker map (worker id -> worker address)
 	cls    map[string]*rpc.Client // client map (worker id -> rpc client)
 	partFn func(string) uint64
+	s      chan interface{}
 }
 
 func (n *node) Addr() string {
@@ -46,9 +47,13 @@ func (n *node) InitNode(addr, port string) {
 	n.port = port
 	n.cls = make(map[string]*rpc.Client)
 	n.partFn = dumbHashFn
+	n.s = make(chan interface{}, 1)
+	n.s <- 1
 }
 
 func (n *node) cl(wid string) (*rpc.Client, os.Error) {
+	<-n.s
+	defer func() { n.s <- 1 }()
 	if n.cls == nil {
 		n.cls = make(map[string]*rpc.Client)
 	}

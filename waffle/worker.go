@@ -376,6 +376,7 @@ func (w *Worker) execStep() os.Error {
 	// this blocks and will prevent us from notifying until all of our msgs are
 	// sent
 	w.outq.flush()
+	w.outq.wait.Wait()
 
 	// persist if checkpoint
 	if w.checkpoint && w.persister != nil {

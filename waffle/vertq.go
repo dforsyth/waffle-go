@@ -106,9 +106,13 @@ func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
 	if e != nil {
 		return e
 	}
-	var r Resp
-	if e = cl.Call("Worker.QueueVertices", verts, &r); e != nil {
-		return e
+	if id == q.w.wid {
+		q.w.vinq.addVertices(verts)
+	} else {
+		var r Resp
+		if e = cl.Call("Worker.QueueVertices", verts, &r); e != nil {
+			return e
+		}
 	}
 	q.w.logger.Printf("sent %d verts to %s", len(verts), id)
 	return nil

@@ -2,6 +2,7 @@ package waffle
 
 import (
 	"os"
+	"sync"
 )
 
 type MsgQ interface {
@@ -56,6 +57,7 @@ type OutMsgQ struct {
 	w      *Worker
 	thresh int64
 	sent   uint64
+	wait   sync.WaitGroup
 }
 
 func newOutMsgQ(w *Worker, thresh int64) *OutMsgQ {
@@ -79,14 +81,10 @@ func (q *OutMsgQ) reset() {
 	q.sent = 0
 }
 
-func (q *OutMsgQ) sendMsgs(wid string) os.Error {
+func (q *OutMsgQ) sendMsgs(wid string, msgs []Msg) os.Error {
 	cl, e := q.w.cl(wid)
 	if e != nil {
 		return e
-	}
-	msgs := q.out[wid]
-	if msgs == nil {
-		return nil
 	}
 	if wid == q.w.wid {
 		q.w.inq.addMsgs(msgs)
@@ -100,6 +98,18 @@ func (q *OutMsgQ) sendMsgs(wid string) os.Error {
 	return nil
 }
 
+func (q *OutMsgQ) sendMsgsAsync(id string, msgs []Msg) chan interface{} {
+	ch := make(chan interface{})
+	q.wait.Add(1)
+	go func() {
+		if e := q.sendMsgs(id, msgs); e != nil {
+			ch <- e
+		}
+		q.wait.Done()
+	}()
+	return ch
+}
+
 func (q *OutMsgQ) addMsg(msg Msg) {
 	<-q.s
 	defer func() { q.s <- 1 }()
@@ -110,18 +120,17 @@ func (q *OutMsgQ) addMsg(msg Msg) {
 	}
 	q.out[wid] = append(q.out[wid], msg)
 	if int64(len(q.out[wid])) >= q.thresh {
-		if e := q.sendMsgs(wid); e != nil {
-			panic(e.String())
-		}
+		msgs := q.out[wid]
 		q.out[wid] = nil, false
+		q.sendMsgsAsync(wid, msgs)
 	}
 }
 
 func (q *OutMsgQ) flush() {
 	<-q.s
 	defer func() { q.s <- 1 }()
-	for wid, _ := range q.out {
-		if e := q.sendMsgs(wid); e != nil {
+	for wid, msgs := range q.out {
+		if e := q.sendMsgs(wid, msgs); e != nil {
 			panic(e.String())
 		}
 	}
