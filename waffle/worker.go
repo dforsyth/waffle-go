@@ -290,9 +290,12 @@ func (w *Worker) SecondaryDataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
 
 func (w *Worker) loadMoreVertices() os.Error {
 	w.logger.Printf("Worker %s is loading vertices from vinq", w.wid)
+	loaded := 0
 	for _, v := range w.vinq.verts {
 		w.AddToPartition(v)
+		loaded++
 	}
+	w.logger.Printf("Worker %s loaded %d vertices from vinq", w.wid, loaded)
 	w.vinq.clear()
 	w.collectWorkerInfo()
 	if err := w.notifyMaster("Master.NotifySecondaryDataLoadComplete"); err != nil {

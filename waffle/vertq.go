@@ -69,7 +69,6 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 	if uint64(len(q.verts[wid])) > q.thresh {
 		verts := q.verts[wid]
 		q.verts[wid] = nil, false
-		q.w.logger.Printf("Sending %d verts to %s", len(verts), wid)
 		q.sendVerticesAsync(wid, verts)
 	}
 	q.s <- 1
@@ -114,7 +113,6 @@ func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
 			return e
 		}
 	}
-	q.w.logger.Printf("sent %d verts to %s", len(verts), id)
 	return nil
 }
 
