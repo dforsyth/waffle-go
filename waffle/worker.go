@@ -290,7 +290,7 @@ func (w *Worker) SecondaryDataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
 func (w *Worker) loadMoreVertices() os.Error {
 	w.logger.Printf("Worker %s is loading vertices from vinq", w.wid)
 	for _, v := range w.vinq.verts {
-		w.addToPartition(v)
+		w.AddToPartition(v)
 	}
 	w.vinq.clear()
 	w.collectWorkerInfo()
@@ -301,7 +301,7 @@ func (w *Worker) loadMoreVertices() os.Error {
 	return nil
 }
 
-func (w *Worker) addToPartition(v Vertex) os.Error {
+func (w *Worker) AddToPartition(v Vertex) os.Error {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
