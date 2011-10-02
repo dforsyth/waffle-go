@@ -64,6 +64,12 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 		q.verts[wid] = make([]Vertex, 0)
 	}
 	q.verts[wid] = append(q.verts[wid], v)
+	if uint64(len(q.verts[wid])) > q.thresh {
+		if e := q.sendVertices(wid, q.verts[wid]); e != nil {
+			panic(e)
+		}
+		q.verts[wid] = nil, false
+	}
 	q.s <- 1
 }
 
