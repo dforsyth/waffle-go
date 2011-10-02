@@ -267,15 +267,11 @@ func (w *Worker) DataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
 func (w *Worker) loadVertices() os.Error {
 	w.logger.Printf("Worker %s is loading vertices from loader", w.wid)
 	// load verts
-	verts, e := w.loader.Load(w)
+	loaded, e := w.loader.Load(w)
 	if e != nil {
 		panic(e.String())
 	}
-	w.logger.Printf("Worker %s loaded %d vertices", w.wid, len(verts))
-	// distribute verts to partitions
-	for _, v := range verts {
-		w.addToPartition(v)
-	}
+	w.logger.Printf("Worker %s loaded %d vertices", w.wid, loaded)
 	// flush the voutq before we report completion
 	w.voutq.flush()
 	w.collectWorkerInfo()

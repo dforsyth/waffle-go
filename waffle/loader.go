@@ -5,13 +5,5 @@ import (
 )
 
 type Loader interface {
-	Load(w *Worker) ([]Vertex, os.Error)
-}
-
-type BasicLoader struct {
-	w *Worker
-}
-
-func (l *BasicLoader) Worker() *Worker {
-	return l.w
+	Load(w *Worker) (int, os.Error)
 }
