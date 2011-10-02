@@ -134,7 +134,7 @@ func (q *OutMsgQ) flush() {
 			panic(e.String())
 		}
 	}
-	for wid, _ := range q.out {
+	for wid := range q.out {
 		q.out[wid] = nil, false
 	}
 }

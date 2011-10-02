@@ -222,7 +222,7 @@ func (m *Master) determinePartitions() {
 
 	pmap := make(map[uint64]string)
 	var p uint64 = 0
-	for id, _ := range m.wmap {
+	for id := range m.wmap {
 		for i := 0; i < int(m.partsPerWorker); i++ {
 			pmap[p] = id
 			p++
@@ -253,7 +253,7 @@ func (m *Master) determinePartitions() {
 // Send a message to all of the workers we know of, using waitMap as our sync map.  If waitCh isn't nil, send the worker id on it
 // once the rpc call is complete.
 func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interface{}) os.Error {
-	for id, _ := range m.wmap {
+	for id := range m.wmap {
 		wid := id
 		cl, e := m.cl(wid)
 		if e != nil {
@@ -395,7 +395,7 @@ func (m *Master) execStep() os.Error {
 	sm := &SuperstepMsg{Superstep: m.superstep, NumVerts: m.numVertices}
 	m.clearActiveInfo()
 	sm.JobId = m.jobId
-	for id, _ := range m.wmap {
+	for id := range m.wmap {
 		wid := id
 		cl, e := m.cl(wid)
 		if e != nil {

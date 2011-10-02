@@ -429,7 +429,7 @@ func (w *Worker) writeResults() {
 func (w *Worker) endJob(m *BasicMasterMsg, resp *Resp) os.Error {
 	defer func() {
 		w.mcl.Close()
-		for wid, _ := range w.wmap {
+		for wid := range w.wmap {
 			cl, _ := w.cl(wid)
 			cl.Close()
 		}
