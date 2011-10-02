@@ -274,6 +274,7 @@ func (w *Worker) loadVertices() os.Error {
 	w.logger.Printf("Worker %s loaded %d vertices", w.wid, loaded)
 	// flush the voutq before we report completion
 	w.voutq.flush()
+	w.voutq.wait.Wait()
 	w.collectWorkerInfo()
 	if err := w.notifyMaster("Master.NotifyInitialDataLoadComplete"); err != nil {
 		return err
@@ -329,10 +330,8 @@ func (w *Worker) PrepareForSuperstep(args *BasicMasterMsg, resp *Resp) os.Error 
 // This is step is just to let us swap message queues.  In the future I should
 // probably just put a superstep value in Msgs so this is unnecessary?
 func (w *Worker) prepareForSuperstep() os.Error {
-	tmp := w.msgs
-	w.msgs = w.inq
-	tmp.clear()
-	w.inq = tmp
+	w.msgs, w.inq = w.inq, w.msgs
+	w.inq.clear()
 
 	if err := w.notifyMaster("Master.NotifyPrepareComplete"); err != nil {
 		return err

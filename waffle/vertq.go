@@ -2,6 +2,7 @@ package waffle
 
 import (
 	"os"
+	"sync"
 )
 
 type VertexQ interface {
@@ -43,6 +44,7 @@ type OutVertexQ struct {
 	s      chan byte
 	w      *Worker
 	thresh uint64
+	wait   sync.WaitGroup
 }
 
 func newOutVertexQ(w *Worker, thresh uint64) *OutVertexQ {
@@ -65,10 +67,10 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 	}
 	q.verts[wid] = append(q.verts[wid], v)
 	if uint64(len(q.verts[wid])) > q.thresh {
-		if e := q.sendVertices(wid, q.verts[wid]); e != nil {
-			panic(e)
-		}
+		verts := q.verts[wid]
 		q.verts[wid] = nil, false
+		q.w.logger.Printf("Sending %d verts to %s", len(verts), wid)
+		q.sendVerticesAsync(wid, verts)
 	}
 	q.s <- 1
 }
@@ -79,9 +81,24 @@ func (q *OutVertexQ) flush() os.Error {
 		if e := q.sendVertices(wid, verts); e != nil {
 			panic(e)
 		}
+		q.verts[wid] = nil, false
 	}
 	q.s <- 1
 	return nil
+}
+
+func (q *OutVertexQ) sendVerticesAsync(id string, verts []Vertex) chan interface{} {
+	ch := make(chan interface{})
+	q.wait.Add(1)
+	go func() {
+		if e := q.sendVertices(id, verts); e != nil {
+			// passing back the error this way doesn't give us much to handle it with,
+			// we're going to need to be more descriptive at some point
+			ch <- e
+		}
+		q.wait.Done()
+	}()
+	return ch
 }
 
 func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
@@ -93,6 +110,7 @@ func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
 	if e = cl.Call("Worker.QueueVertices", verts, &r); e != nil {
 		return e
 	}
+	q.w.logger.Printf("sent %d verts to %s", len(verts), id)
 	return nil
 }
 
