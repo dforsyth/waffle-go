@@ -5,5 +5,18 @@ import (
 )
 
 type Loader interface {
-	Load(w *Worker) (int, os.Error)
+	Init(w *Worker)
+	Load() (int, os.Error)
+}
+
+type LoaderBase struct {
+	w *Worker
+}
+
+func (l *LoaderBase) Init(w *Worker) {
+	l.w = w
+}
+
+func (l *LoaderBase) AddVertex(v Vertex) {
+	l.w.addToPartition(v)
 }

@@ -108,6 +108,7 @@ func (w *Worker) RegisterEdge(e Edge) {
 // The loader handles loading vertices and edges from the initial data source
 func (w *Worker) SetLoader(l Loader) {
 	w.loader = l
+	w.loader.Init(w)
 }
 
 // The result writer writes the final results of the job
@@ -267,7 +268,7 @@ func (w *Worker) DataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
 func (w *Worker) loadVertices() os.Error {
 	w.logger.Printf("Worker %s is loading vertices from loader", w.wid)
 	// load verts
-	loaded, e := w.loader.Load(w)
+	loaded, e := w.loader.Load()
 	if e != nil {
 		panic(e.String())
 	}
@@ -292,7 +293,7 @@ func (w *Worker) loadMoreVertices() os.Error {
 	w.logger.Printf("Worker %s is loading vertices from vinq", w.wid)
 	loaded := 0
 	for _, v := range w.vinq.verts {
-		w.AddToPartition(v)
+		w.addToPartition(v)
 		loaded++
 	}
 	w.logger.Printf("Worker %s loaded %d vertices from vinq", w.wid, loaded)
@@ -305,7 +306,7 @@ func (w *Worker) loadMoreVertices() os.Error {
 	return nil
 }
 
-func (w *Worker) AddToPartition(v Vertex) os.Error {
+func (w *Worker) addToPartition(v Vertex) os.Error {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
@@ -371,7 +372,6 @@ func (w *Worker) collectWorkerInfo() {
 
 func (w *Worker) execStep() os.Error {
 	// XXX this is out of order?
-
 	w.logger.Printf("Executing step %d", w.superstep)
 
 	w.compute()

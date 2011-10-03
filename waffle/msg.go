@@ -25,6 +25,25 @@ func (m *MsgBase) SetDestVertId(dest string) {
 	m.DestId = dest
 }
 
+type RemoveVertexMsg struct {
+	MsgBase
+}
+
+type RemoveEdgeMsg struct {
+	MsgBase
+	TargetId string
+}
+
+type AddVertexMsg struct {
+	MsgBase
+	V Vertex
+}
+
+type AddEdgeMsg struct {
+	MsgBase
+	E Edge
+}
+
 // messages between workers and master (control rpc, not waffle messages)
 type CoordMsg interface {
 
