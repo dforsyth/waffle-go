@@ -4,6 +4,7 @@ import ()
 
 type Edge interface {
 	Target() string
+	SetTarget(string)
 }
 
 type EdgeBase struct {

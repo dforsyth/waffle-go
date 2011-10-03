@@ -24,20 +24,21 @@ func newWorkerInfo() *workerInfo {
 
 type Master struct {
 	node
-	jobId              string
-	state              int
-	regch              chan byte
-	loadch             chan interface{}
-	workch             chan interface{}
-	writech            chan interface{}
-	preparech          chan interface{}
-	minWorkers         uint64
-	registerWait       int64
-	superstep          uint64
-	partsPerWorker     uint64
-	heartbeatInterval  int64
-	heartbeatTimeout   int64
-	startTime, endTime int64
+	jobId             string
+	state             int
+	regch             chan byte
+	loadch            chan interface{}
+	workch            chan interface{}
+	writech           chan interface{}
+	preparech         chan interface{}
+	minWorkers        uint64
+	registerWait      int64
+	superstep         uint64
+	partsPerWorker    uint64
+	heartbeatInterval int64
+	heartbeatTimeout  int64
+	startTime         int64
+	endTime           int64
 
 	wInfo map[string]*workerInfo
 
