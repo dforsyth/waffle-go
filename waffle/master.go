@@ -172,7 +172,7 @@ func (m *Master) ekg(id string) {
 			if call.Error != nil {
 				panic(call.Error)
 			}
-		case <-time.Tick(m.heartbeatTimeout):
+		case <-time.After(m.heartbeatTimeout):
 			// handle fault
 		}
 
