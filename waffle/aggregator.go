@@ -5,7 +5,12 @@ import (
 )
 
 type Aggregator interface {
-	Aggregate(*Worker) (string, string, os.Error)
+	Init(*Worker)
+	Aggregate() (string, interface{}, os.Error)
 	BeforeCompute()
 	AfterCompute()
+}
+
+type AggregatorBase struct {
+	Component
 }

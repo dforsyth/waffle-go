@@ -5,16 +5,12 @@ import (
 )
 
 type Loader interface {
-	Init(w *Worker)
+	Init(*Worker)
 	Load() (int, os.Error)
 }
 
 type LoaderBase struct {
-	w *Worker
-}
-
-func (l *LoaderBase) Init(w *Worker) {
-	l.w = w
+	Component
 }
 
 func (l *LoaderBase) AddVertex(v Vertex) {

@@ -86,6 +86,12 @@ func (q *OutMsgQ) sendMsgs(wid string, msgs []Msg) os.Error {
 	if e != nil {
 		return e
 	}
+
+	// combine msgs if possible
+	for _, combiner := range q.w.combiners {
+		msgs = combiner.Combine(msgs)
+	}
+
 	if wid == q.w.wid {
 		q.w.inq.addMsgs(msgs)
 	} else {

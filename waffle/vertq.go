@@ -43,11 +43,11 @@ type OutVertexQ struct {
 	verts  map[string][]Vertex
 	s      chan byte
 	w      *Worker
-	thresh uint64
+	thresh int64
 	wait   sync.WaitGroup
 }
 
-func newOutVertexQ(w *Worker, thresh uint64) *OutVertexQ {
+func newOutVertexQ(w *Worker, thresh int64) *OutVertexQ {
 	q := &OutVertexQ{
 		verts:  make(map[string][]Vertex, 0),
 		s:      make(chan byte, 1),
@@ -66,7 +66,7 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 		q.verts[wid] = make([]Vertex, 0)
 	}
 	q.verts[wid] = append(q.verts[wid], v)
-	if uint64(len(q.verts[wid])) > q.thresh {
+	if int64(len(q.verts[wid])) > q.thresh {
 		verts := q.verts[wid]
 		q.verts[wid] = nil, false
 		q.sendVerticesAsync(wid, verts)

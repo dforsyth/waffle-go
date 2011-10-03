@@ -20,6 +20,14 @@ type jobStat struct {
 	numVertices uint64
 }
 
+type Component struct {
+	w *Worker
+}
+
+func (c *Component) Init(w *Worker) {
+	c.w = w
+}
+
 type Worker struct {
 	node
 	wid   string
@@ -55,7 +63,7 @@ type Worker struct {
 	resultWriter ResultWriter
 	persister    Persister
 	aggregators  []Aggregator
-	combiner     Combiner
+	combiners    []Combiner
 }
 
 // Worker state
@@ -70,18 +78,18 @@ const (
 	STORE
 )
 
-func NewWorker(addr, port string) *Worker {
+func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
 	w := &Worker{
-		logger: log.New(os.Stdout, "(worker) "+net.JoinHostPort(addr, port)+": ", 0),
+		logger: log.New(os.Stdout, "(worker)["+net.JoinHostPort(addr, port)+"]: ", 0),
 		state:  NONE,
 		parts:  make(map[uint64]*Partition),
 	}
 	w.InitNode(addr, port)
 	w.msgs = newInMsgQ()
 	w.inq = newInMsgQ()
-	w.outq = newOutMsgQ(w, 10)
+	w.outq = newOutMsgQ(w, msgThreshold)
 	w.vinq = newInVertexQ()
-	w.voutq = newOutVertexQ(w, 10)
+	w.voutq = newOutVertexQ(w, vertThreshold)
 
 	// Register the base types with gob
 	gob.Register(&VertexBase{})
@@ -119,6 +127,13 @@ func (w *Worker) SetResultWriter(rw ResultWriter) {
 // The persister reads and write data that is persisted at checkpoints
 func (w *Worker) SetPersister(p Persister) {
 	w.persister = p
+}
+
+func (w *Worker) AddCombiner(c Combiner) {
+	if w.combiners == nil {
+		w.combiners = make([]Combiner, 0)
+	}
+	w.combiners = append(w.combiners, c)
 }
 
 // XXX temp function until theres some sort of discovery mechanism
@@ -384,7 +399,7 @@ func (w *Worker) execStep() os.Error {
 	// persist if checkpoint
 	if w.checkpoint && w.persister != nil {
 		// TODO: handle errors
-		w.persister.Write(w)
+		w.persister.Write()
 	}
 
 	w.collectWorkerInfo()
