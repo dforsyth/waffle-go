@@ -28,6 +28,10 @@ func (c *Component) Init(w *Worker) {
 	c.w = w
 }
 
+func (c *Component) Worker() *Worker {
+	return c.w
+}
+
 type Worker struct {
 	node
 	wid   string
@@ -436,7 +440,8 @@ func (w *Worker) WriteResults(m *BasicMasterMsg, resp *Resp) os.Error {
 func (w *Worker) writeResults() {
 	w.logger.Printf("Writing results")
 	if w.resultWriter != nil {
-		w.resultWriter.WriteResults(w)
+		w.resultWriter.Init(w)
+		w.resultWriter.WriteResults()
 	}
 	w.notifyMaster("Master.NotifyWriteResultsComplete")
 }
