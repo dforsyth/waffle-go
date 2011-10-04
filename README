@@ -25,6 +25,7 @@ TODO:
 	Monitoring/web interface
 	Fault tolerance
 	Duplicate code
+	Multiple jobs
 	Mesos?
 	Streaming?
 
