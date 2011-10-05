@@ -159,7 +159,8 @@ func (w *Worker) genWorkerInfoMsg(success bool) *WorkerInfoMsg {
 	m := &WorkerInfoMsg{ActiveVerts: w.workerStats.activeVertices,
 		NumVerts: w.workerStats.numVertices,
 		SentMsgs: w.workerStats.sentMsgs,
-		Success:  success}
+		Success:  success,
+	}
 	m.Wid = w.wid
 	return m
 }
@@ -393,18 +394,19 @@ func (w *Worker) execStep() os.Error {
 	// XXX this is out of order?
 	w.logger.Printf("Executing step %d", w.superstep)
 
+	// persist if checkpoint
+	if w.checkpoint && w.persister != nil {
+		if err := w.persister.Write(); err != nil {
+			return err
+		}
+	}
+
 	w.compute()
 	w.logger.Printf("Done computation, flushing outq")
 	// this blocks and will prevent us from notifying until all of our msgs are
 	// sent
 	w.outq.flush()
 	w.outq.wait.Wait()
-
-	// persist if checkpoint
-	if w.checkpoint && w.persister != nil {
-		// TODO: handle errors
-		w.persister.Write()
-	}
 
 	w.collectWorkerInfo()
 

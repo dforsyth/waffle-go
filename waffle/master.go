@@ -42,7 +42,8 @@ type Master struct {
 
 	wInfo map[string]*workerInfo
 
-	widFn func(string, string) string
+	widFn        func(string, string) string
+	checkpointFn func(uint64) bool
 
 	logger *log.Logger
 
@@ -95,11 +96,22 @@ func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, regi
 	m.widFn = func(addr, port string) string {
 		return net.JoinHostPort(addr, port)
 	}
+	m.checkpointFn = func(superstep uint64) bool {
+		return false
+	}
 	return m
 }
 
 func (m *Master) InitMaster(addr, port string) {
 	m.InitNode(addr, port)
+}
+
+func (m *Master) SetWorkerIdFn(fn func(string, string) string) {
+	m.widFn = fn
+}
+
+func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
+	m.checkpointFn = fn
 }
 
 // Zero out the stats from the last step
@@ -396,7 +408,7 @@ func (m *Master) NotifyPrepareComplete(args *WorkerInfoMsg, resp *Resp) os.Error
 // super step
 func (m *Master) execStep() os.Error {
 	m.logger.Printf("doing step %d. active: %d. total: %d. sent: %d", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
-	sm := &SuperstepMsg{Superstep: m.superstep, NumVerts: m.numVertices}
+	sm := &SuperstepMsg{Superstep: m.superstep, NumVerts: m.numVertices, Checkpoint: m.checkpointFn(m.superstep)}
 	m.clearActiveInfo()
 	sm.JobId = m.jobId
 	for id := range m.wmap {
