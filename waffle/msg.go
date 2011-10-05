@@ -67,20 +67,10 @@ type RegisterResp struct {
 	JobId string
 }
 
-type PmapMsg struct {
-	BasicMasterMsg
-	Pmap map[uint64]string
-}
-
-type WmapMsg struct {
-	BasicMasterMsg
-	Wmap map[string]string
-}
-
 type ClusterInfoMsg struct {
-	BasicMasterMsg
-	PmapMsg
-	WmapMsg
+	JobId string
+	Pmap  map[uint64]string
+	Wmap  map[string]string
 }
 
 type WorkerInfoMsg struct {

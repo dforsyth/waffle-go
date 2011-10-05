@@ -145,10 +145,6 @@ func (w *Worker) SetMasterAddress(addr string) {
 	w.maddr = addr
 }
 
-func (w *Worker) InitWorker(addr, port string) {
-	w.InitNode(addr, port)
-}
-
 func (w *Worker) MsgHandler(msgs []Msg, resp *Resp) os.Error {
 	go w.inq.addMsgs(msgs)
 	*resp = OK
