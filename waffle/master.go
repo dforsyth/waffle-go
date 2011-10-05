@@ -22,23 +22,29 @@ func newWorkerInfo() *workerInfo {
 	}
 }
 
-type Master struct {
-	node
-	jobId             string
-	state             int
-	regch             chan byte
-	loadch            chan interface{}
-	workch            chan interface{}
-	writech           chan interface{}
-	preparech         chan interface{}
+type masterConfig struct {
 	minWorkers        uint64
 	registerWait      int64
-	superstep         uint64
 	partsPerWorker    uint64
 	heartbeatInterval int64
 	heartbeatTimeout  int64
-	startTime         int64
-	endTime           int64
+	jobId             string
+}
+
+type Master struct {
+	node
+
+	config masterConfig
+
+	state     int
+	regch     chan byte
+	loadch    chan interface{}
+	workch    chan interface{}
+	writech   chan interface{}
+	preparech chan interface{}
+	superstep uint64
+	startTime int64
+	endTime   int64
 
 	wInfo map[string]*workerInfo
 
@@ -75,21 +81,23 @@ func (m *Master) barrier(ch chan interface{}) {
 
 func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, registerWait, heartbeatInterval, heartbeatTimeout int64) *Master {
 	m := &Master{
-		jobId:             jobId,
-		regch:             make(chan byte, 1),
-		as:                make(chan byte, 1),
-		loadch:            make(chan interface{}),
-		workch:            make(chan interface{}),
-		writech:           make(chan interface{}),
-		preparech:         make(chan interface{}),
-		logger:            log.New(os.Stdout, "(master)["+net.JoinHostPort(addr, port)+"]["+jobId+"]: ", 0),
-		minWorkers:        minWorkers,
-		wInfo:             make(map[string]*workerInfo),
-		partsPerWorker:    partsPerWorker,
-		registerWait:      registerWait,
-		heartbeatInterval: heartbeatInterval,
-		heartbeatTimeout:  heartbeatTimeout,
+		regch:     make(chan byte, 1),
+		as:        make(chan byte, 1),
+		loadch:    make(chan interface{}),
+		workch:    make(chan interface{}),
+		writech:   make(chan interface{}),
+		preparech: make(chan interface{}),
+		logger:    log.New(os.Stdout, "(master)["+net.JoinHostPort(addr, port)+"]["+jobId+"]: ", 0),
+		wInfo:     make(map[string]*workerInfo),
 	}
+
+	m.config.jobId = jobId
+	m.config.partsPerWorker = partsPerWorker
+	m.config.registerWait = registerWait
+	m.config.heartbeatInterval = heartbeatInterval
+	m.config.heartbeatTimeout = heartbeatTimeout
+	m.config.minWorkers = minWorkers
+
 	m.InitNode(addr, port)
 	m.regch <- 1
 	m.as <- 1
@@ -147,7 +155,7 @@ func (m *Master) init() os.Error {
 
 // Set partitions per worker
 func (m *Master) SetPartitionsPerWorker(partsPerWorker uint64) {
-	m.partsPerWorker = partsPerWorker
+	m.config.partsPerWorker = partsPerWorker
 }
 
 // job setup
@@ -169,7 +177,7 @@ func (m *Master) prepare() os.Error {
 }
 
 func (m *Master) ekg(id string) {
-	msg := &BasicMasterMsg{JobId: m.jobId}
+	msg := &BasicMasterMsg{JobId: m.config.jobId}
 	cl, e := m.cl(id)
 	if e != nil {
 		panic(e.String())
@@ -184,7 +192,7 @@ func (m *Master) ekg(id string) {
 			if call.Error != nil {
 				panic(call.Error)
 			}
-		case <-time.After(m.heartbeatTimeout):
+		case <-time.After(m.config.heartbeatTimeout):
 			// handle fault
 		}
 
@@ -192,7 +200,7 @@ func (m *Master) ekg(id string) {
 		select {
 		case <-info.ekgch:
 			return
-		case <-time.Tick(m.heartbeatInterval):
+		case <-time.Tick(m.config.heartbeatInterval):
 			// resetTimeout
 		}
 	}
@@ -210,7 +218,7 @@ func (m *Master) Register(args *RegisterMsg, resp *RegisterResp) os.Error {
 	*/
 	wid := m.widFn(args.Addr, args.Port)
 	// XXX For now, we don't care if someone registers twice, there will just be an overwrite
-	resp.JobId = m.jobId
+	resp.JobId = m.config.jobId
 	resp.Wid = wid
 	m.wmap[wid] = net.JoinHostPort(args.Addr, args.Port)
 	m.wInfo[wid] = newWorkerInfo()
@@ -225,7 +233,7 @@ func (m *Master) registerWorkers() os.Error {
 	m.wmap = make(map[string]string)
 	sec := int64(1 * 1e9)
 	var timeout int64 = 0
-	for uint64(len(m.wmap)) < m.minWorkers || timeout < m.registerWait {
+	for uint64(len(m.wmap)) < m.config.minWorkers || timeout < m.config.registerWait {
 		<-time.Tick(sec)
 		timeout += sec
 	}
@@ -239,7 +247,7 @@ func (m *Master) determinePartitions() {
 	pmap := make(map[uint64]string)
 	var p uint64 = 0
 	for id := range m.wmap {
-		for i := 0; i < int(m.partsPerWorker); i++ {
+		for i := 0; i < int(m.config.partsPerWorker); i++ {
 			pmap[p] = id
 			p++
 		}
@@ -255,7 +263,7 @@ func (m *Master) determinePartitions() {
 	// a file from some location
 	distch := make(chan interface{})
 	tm := &ClusterInfoMsg{}
-	tm.JobId = m.jobId
+	tm.JobId = m.config.jobId
 	tm.Pmap = m.pmap
 	tm.Wmap = m.wmap
 	if e := m.sendToAllWorkers("Worker.WorkerInfo", tm, distch); e != nil {
@@ -295,7 +303,7 @@ func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interfa
 func (m *Master) initialDataLoad() os.Error {
 	m.logger.Printf("Instructing workers to do first phase of data load")
 
-	lm := &BasicMasterMsg{JobId: m.jobId}
+	lm := &BasicMasterMsg{JobId: m.config.jobId}
 	if e := m.sendToAllWorkers("Worker.DataLoad", lm, nil); e != nil {
 		panic(e.String())
 	}
@@ -314,7 +322,7 @@ func (m *Master) NotifyInitialDataLoadComplete(args *WorkerInfoMsg, resp *Resp) 
 func (m *Master) secondaryDataLoad() os.Error {
 	m.logger.Printf("Instructing workers to do second phase of data load")
 
-	lm := &BasicMasterMsg{JobId: m.jobId}
+	lm := &BasicMasterMsg{JobId: m.config.jobId}
 	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", lm, nil); e != nil {
 		panic(e.String())
 	}
@@ -342,7 +350,7 @@ func (m *Master) handleActiveInfoUpdate(msg *WorkerInfoMsg, ch chan interface{})
 
 func (m *Master) completeJob() os.Error {
 	m.logger.Printf("Instructing workers to write results")
-	wr := &BasicMasterMsg{JobId: m.jobId}
+	wr := &BasicMasterMsg{JobId: m.config.jobId}
 	if e := m.sendToAllWorkers("Worker.WriteResults", wr, nil); e != nil {
 		panic(e.String())
 	}
@@ -359,7 +367,7 @@ func (m *Master) NotifyWriteResultsComplete(args *WorkerInfoMsg, resp *Resp) os.
 }
 
 func (m *Master) endWorkers() os.Error {
-	if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.jobId}, nil); e != nil {
+	if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.config.jobId}, nil); e != nil {
 		panic(e.String())
 	}
 	// don't wait for a notify on this call	
@@ -390,7 +398,7 @@ func (m *Master) compute() os.Error {
 
 func (m *Master) prepareWorkers() os.Error {
 	var msg BasicMasterMsg
-	msg.JobId = m.jobId
+	msg.JobId = m.config.jobId
 	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", &msg, nil); e != nil {
 		panic(e.String())
 	}
@@ -410,7 +418,7 @@ func (m *Master) execStep() os.Error {
 	m.logger.Printf("doing step %d. active: %d. total: %d. sent: %d", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
 	sm := &SuperstepMsg{Superstep: m.superstep, NumVerts: m.numVertices, Checkpoint: m.checkpointFn(m.superstep)}
 	m.clearActiveInfo()
-	sm.JobId = m.jobId
+	sm.JobId = m.config.jobId
 	for id := range m.wmap {
 		wid := id
 		cl, e := m.cl(wid)
