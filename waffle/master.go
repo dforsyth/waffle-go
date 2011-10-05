@@ -256,7 +256,7 @@ func (m *Master) determinePartitions() {
 
 	// XXX This is really not how topology should be distributed.  It might be better to have each worker download
 	// a file from some location
-	tm := &ClusterInfoMsg{JobId: jobId, Pmap: m.pmap, Wmap: m.wmap}
+	tm := &ClusterInfoMsg{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}
 
 	distch := make(chan interface{})
 	if e := m.sendToAllWorkers("Worker.WorkerInfo", tm, distch); e != nil {
