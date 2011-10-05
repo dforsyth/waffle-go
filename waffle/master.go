@@ -243,8 +243,9 @@ func (m *Master) determinePartitions() {
 	m.logger.Printf("Designating partitions")
 
 	m.pmap = make(map[uint64]string)
+	p := 0
 	for id := range m.wmap {
-		for i, p := 0, 0; i < int(m.config.partsPerWorker); i, p = i+1, p+1 {
+		for i := 0; i < int(m.config.partsPerWorker); i, p = i+1, p+1 {
 			m.pmap[uint64(p)] = id
 		}
 	}
