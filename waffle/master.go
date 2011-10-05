@@ -67,6 +67,8 @@ func (m *Master) barrier(ch chan interface{}) {
 		switch t := e.(type) {
 		case string:
 			bmap[t] = nil
+		case os.Error:
+			panic(t)
 		}
 		if len(bmap) == len(m.wmap) {
 			return
@@ -114,7 +116,7 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 }
 
 // Zero out the stats from the last step
-func (m *Master) clearActiveInfo() {
+func (m *Master) resetJobInfo() {
 	<-m.as
 	m.activeVerts = 0
 	m.sentMsgs = 0
@@ -161,7 +163,7 @@ func (m *Master) prepare() os.Error {
 	// sending verts off to the correct worker if need be.  Then, we do a
 	// second load step, where anything that was sent around is loaded.
 	m.dataLoadPhase1()
-	m.clearActiveInfo()
+	m.resetJobInfo()
 	m.dataLoadPhase2()
 
 	return nil
@@ -221,7 +223,7 @@ func (m *Master) Register(args *RegisterMsg, resp *RegisterResp) os.Error {
 	return nil
 }
 
-func (m *Master) registerWorkers() (err os.Error) {
+func (m *Master) registerWorkers() os.Error {
 	m.logger.Printf("Starting registration phase")
 
 	m.wmap = make(map[string]string)
@@ -232,7 +234,7 @@ func (m *Master) registerWorkers() (err os.Error) {
 	}
 
 	if len(m.wmap) == 0 || uint64(len(m.wmap)) < m.config.minWorkers && m.config.registerWait > 0 {
-		err = os.NewError("Not enough workers registered")
+		return os.NewError("Not enough workers registered")
 	}
 
 	m.logger.Printf("Registration phase complete")
@@ -257,10 +259,10 @@ func (m *Master) determinePartitions() {
 
 	// XXX This is really not how topology should be distributed.  It might be better to have each worker download
 	// a file from some location
-	tm := &ClusterInfoMsg{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}
+	msg := &ClusterInfoMsg{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}
 
 	distch := make(chan interface{})
-	if e := m.sendToAllWorkers("Worker.WorkerInfo", tm, distch); e != nil {
+	if e := m.sendToAllWorkers("Worker.WorkerInfo", msg, distch); e != nil {
 		panic(e)
 	}
 	m.barrier(distch)
@@ -283,7 +285,7 @@ func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interfa
 				panic(e)
 			}
 			if r != OK {
-				panic("Response was not OK")
+				panic("Response from was not OK")
 			}
 			if waitCh != nil {
 				waitCh <- wid
@@ -301,8 +303,8 @@ func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interfa
 func (m *Master) dataLoadPhase1() os.Error {
 	m.logger.Printf("Instructing workers to do first phase of data load")
 
-	lm := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.DataLoad", lm, nil); e != nil {
+	msg := &BasicMasterMsg{JobId: m.config.jobId}
+	if e := m.sendToAllWorkers("Worker.DataLoad", msg, nil); e != nil {
 		panic(e)
 	}
 	m.barrier(m.loadch)
@@ -320,8 +322,8 @@ func (m *Master) NotifyInitialDataLoadComplete(args *WorkerInfoMsg, resp *Resp) 
 func (m *Master) dataLoadPhase2() os.Error {
 	m.logger.Printf("Instructing workers to do second phase of data load")
 
-	lm := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", lm, nil); e != nil {
+	msg := &BasicMasterMsg{JobId: m.config.jobId}
+	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", msg, nil); e != nil {
 		panic(e)
 	}
 	m.barrier(m.loadch)
@@ -349,8 +351,8 @@ func (m *Master) handleActiveInfoUpdate(msg *WorkerInfoMsg, ch chan interface{})
 func (m *Master) completeJob() os.Error {
 	m.logger.Printf("Instructing workers to write results")
 
-	wr := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.WriteResults", wr, nil); e != nil {
+	msg := &BasicMasterMsg{JobId: m.config.jobId}
+	if e := m.sendToAllWorkers("Worker.WriteResults", msg, nil); e != nil {
 		panic(e)
 	}
 	m.barrier(m.writech)
@@ -396,9 +398,8 @@ func (m *Master) compute() os.Error {
 }
 
 func (m *Master) prepareWorkers() os.Error {
-	var msg BasicMasterMsg
-	msg.JobId = m.config.jobId
-	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", &msg, nil); e != nil {
+	msg := &BasicMasterMsg{JobId: m.config.jobId}
+	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", msg, nil); e != nil {
 		panic(e)
 	}
 	m.barrier(m.preparech)
@@ -408,16 +409,24 @@ func (m *Master) prepareWorkers() os.Error {
 
 func (m *Master) NotifyPrepareComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
 	*resp = OK
-	m.preparech <- args.Wid
+	go func() {
+		m.preparech <- args.Wid
+	}()
 	return nil
 }
 
 // super step
 func (m *Master) execStep() os.Error {
-	m.logger.Printf("doing step %d. active: %d. total: %d. sent: %d", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
-	sm := &SuperstepMsg{Superstep: m.superstep, NumVerts: m.numVertices, Checkpoint: m.checkpointFn(m.superstep)}
-	m.clearActiveInfo()
-	sm.JobId = m.config.jobId
+	m.logger.Printf("Starting step %d -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
+
+	msg := &SuperstepMsg{
+		JobId:      m.config.jobId,
+		Superstep:  m.superstep,
+		NumVerts:   m.numVertices,
+		Checkpoint: m.checkpointFn(m.superstep),
+	}
+
+	m.resetJobInfo()
 	for id := range m.wmap {
 		wid := id
 		cl, e := m.cl(wid)
@@ -426,7 +435,7 @@ func (m *Master) execStep() os.Error {
 		}
 		go func() {
 			var r Resp
-			if e := cl.Call("Worker.Superstep", sm, &r); e != nil {
+			if e := cl.Call("Worker.Superstep", msg, &r); e != nil {
 				panic(e)
 			}
 			if r != OK {

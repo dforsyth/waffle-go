@@ -16,6 +16,7 @@ TODO:
 	Better errors/error handling (or any error handling for that matter)
 	Combiners
 	Aggregators
+	Workers should be able to become master on master failure
 	Add/Remove vertices and edges
 	Deployment utilities
 	Documentation

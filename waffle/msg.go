@@ -82,7 +82,7 @@ type WorkerInfoMsg struct {
 }
 
 type SuperstepMsg struct {
-	BasicMasterMsg
+	JobId      string
 	Superstep  uint64
 	Checkpoint bool
 	// Stats we need to distribute regarding the state of the graph
