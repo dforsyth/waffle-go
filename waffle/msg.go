@@ -67,10 +67,10 @@ type RegisterResp struct {
 	JobId string
 }
 
-type ClusterInfoMsg struct {
+type TopologyInfo struct {
 	JobId string
-	Pmap  map[uint64]string
 	Wmap  map[string]string
+	Pmap  map[uint64]string
 }
 
 type WorkerInfoMsg struct {

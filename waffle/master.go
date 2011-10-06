@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"rpc"
+	"sort"
 	"time"
 )
 
@@ -244,9 +245,16 @@ func (m *Master) registerWorkers() os.Error {
 func (m *Master) determinePartitions() {
 	m.logger.Printf("Designating partitions")
 
+	// iteration order undefined across platforms, pull out values and sort.
+	workers := make([]string, 0, len(m.wmap))
+	for id := range m.wmap {
+		workers = append(workers, id)
+	}
+	sort.Strings(workers)
+
 	m.pmap = make(map[uint64]string)
 	p := 0
-	for id := range m.wmap {
+	for _, id := range workers {
 		for i := 0; i < int(m.config.partsPerWorker); i, p = i+1, p+1 {
 			m.pmap[uint64(p)] = id
 		}
@@ -257,12 +265,10 @@ func (m *Master) determinePartitions() {
 	// Should be a seperate function/phase
 	m.logger.Printf("Distributing worker and partition information")
 
-	// XXX This is really not how topology should be distributed.  It might be better to have each worker download
-	// a file from some location
-	msg := &ClusterInfoMsg{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}
-
+	// push the worker topology to all of the workers registered for this job
 	distch := make(chan interface{})
-	if e := m.sendToAllWorkers("Worker.WorkerInfo", msg, distch); e != nil {
+	// XXX maybe this should go in the opposite direction?  let the workers request the topology in a prepare step?
+	if e := m.sendToAllWorkers("Worker.PushTopology", &TopologyInfo{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}, distch); e != nil {
 		panic(e)
 	}
 	m.barrier(distch)
@@ -427,21 +433,8 @@ func (m *Master) execStep() os.Error {
 	}
 
 	m.resetJobInfo()
-	for id := range m.wmap {
-		wid := id
-		cl, e := m.cl(wid)
-		if e != nil {
-			panic(e)
-		}
-		go func() {
-			var r Resp
-			if e := cl.Call("Worker.Superstep", msg, &r); e != nil {
-				panic(e)
-			}
-			if r != OK {
-				panic("Superstep reply was not ok")
-			}
-		}()
+	if e := m.sendToAllWorkers("Worker.Superstep", msg, nil); e != nil {
+		panic(e)
 	}
 	m.barrier(m.workch)
 

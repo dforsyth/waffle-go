@@ -35,7 +35,7 @@ func (c *Component) Worker() *Worker {
 type Worker struct {
 	node
 	wid   string
-	JobId string
+	jobId string
 
 	maddr string
 	mcl   *rpc.Client
@@ -199,7 +199,7 @@ func (w *Worker) Run() {
 	w.discoverMaster()
 	w.register()
 	// XXX Just die if registration didn't go through
-	if w.JobId == "" {
+	if w.jobId == "" {
 		w.logger.Printf("No job, bye bye")
 		return
 	}
@@ -241,8 +241,8 @@ func (w *Worker) register() os.Error {
 	}
 	if len(r.JobId) > 0 {
 		w.wid = r.Wid
-		w.JobId = r.JobId
-		w.logger.Printf("Registered for %s as %s", w.JobId, w.wid)
+		w.jobId = r.JobId
+		w.logger.Printf("Registered for %s as %s", w.jobId, w.wid)
 	}
 	w.logger.Printf("Done registering")
 	return nil
@@ -253,8 +253,11 @@ func (w *Worker) Healthcheck(args *BasicMasterMsg, resp *Resp) os.Error {
 	return nil
 }
 
-func (w *Worker) WorkerInfo(args *ClusterInfoMsg, resp *Resp) os.Error {
+func (w *Worker) PushTopology(args *TopologyInfo, resp *Resp) os.Error {
 	w.logger.Printf("setting worker info")
+	if args.JobId != w.jobId {
+		panic("JobId mismatch")
+	}
 	w.wmap = args.Wmap
 	w.pmap = args.Pmap
 	*resp = OK
@@ -272,7 +275,7 @@ func (w *Worker) setupPartitions() {
 }
 
 func (w *Worker) DataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
-	if args.JobId != w.JobId {
+	if args.JobId != w.jobId {
 		*resp = NOT_OK
 		return nil
 	}
