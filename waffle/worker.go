@@ -38,18 +38,6 @@ type jobStat struct {
 	numVertices uint64
 }
 
-type Component struct {
-	w *Worker
-}
-
-func (c *Component) Init(w *Worker) {
-	c.w = w
-}
-
-func (c *Component) Worker() *Worker {
-	return c.w
-}
-
 type Worker struct {
 	node
 	workerId string
@@ -138,7 +126,6 @@ func (w *Worker) SetRpcServer(s WorkerRpcServer) {
 // The loader handles loading vertices and edges from the initial data source
 func (w *Worker) SetLoader(l Loader) {
 	w.loader = l
-	w.loader.Init(w)
 }
 
 // The result writer writes the final results of the job
@@ -286,7 +273,7 @@ func (w *Worker) executeLoadDirect() {
 		return
 	}
 
-	loaded, err := w.loader.Load()
+	loaded, err := w.loader.Load(w)
 	if err != nil {
 		summary.addError(err)
 		w.evCh <- &summary
@@ -373,7 +360,7 @@ func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
 
 	if checkpoint {
 		if w.persister != nil {
-			if err := w.persister.Write(); err != nil {
+			if err := w.persister.Write(w); err != nil {
 				summary.addError(err)
 				w.evCh <- summary
 				return
@@ -420,8 +407,7 @@ func (w *Worker) executeWriteResults() {
 		return
 	}
 
-	w.resultWriter.Init(w)
-	if err := w.resultWriter.WriteResults(); err != nil {
+	if err := w.resultWriter.WriteResults(w); err != nil {
 		summary.addError(err)
 	}
 

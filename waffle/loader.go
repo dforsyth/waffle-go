@@ -5,14 +5,13 @@ import (
 )
 
 type Loader interface {
-	Init(*Worker)
-	Load() (uint64, os.Error)
+	Load(w *Worker) (uint64, os.Error)
 }
 
 type LoaderBase struct {
-	Component
+
 }
 
-func (l *LoaderBase) AddVertex(v Vertex) {
-	l.w.addToPartition(v)
+func (*LoaderBase) AddVertex(w *Worker, v Vertex) {
+	w.addToPartition(v)
 }

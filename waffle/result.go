@@ -5,10 +5,5 @@ import (
 )
 
 type ResultWriter interface {
-	Init(*Worker)
-	WriteResults() os.Error
-}
-
-type ResultWriterBase struct {
-	Component
+	WriteResults(*Worker) os.Error
 }
