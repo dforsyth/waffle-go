@@ -1,12 +1,12 @@
 package waffle
 
 import (
+	"gob"
 	"http"
 	"net"
 	"os"
 	"rpc"
 	"sync"
-	"gob"
 )
 
 // GobRpc will ship with the base distribution

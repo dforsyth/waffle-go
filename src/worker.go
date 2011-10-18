@@ -309,6 +309,10 @@ func (w *Worker) executeLoadQueue() {
 	w.evCh <- &summary
 }
 
+func (w *Worker) AddVertex(v Vertex) {
+	w.addToPartition(v)
+}
+
 func (w *Worker) addToPartition(v Vertex) os.Error {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
