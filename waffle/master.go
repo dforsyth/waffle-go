@@ -66,7 +66,7 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 	bmap := make(map[string]interface{})
 	for e := range ch {
 		bmap[e.WorkerId] = nil
-		log.Printf("Phase took %d on %s", e.PhaseTime, e.WorkerId)
+		log.Printf("Phase took %d seconds on worker '%s'", e.PhaseTime, e.WorkerId)
 		if len(bmap) == len(m.workerMap) {
 			return
 		}
