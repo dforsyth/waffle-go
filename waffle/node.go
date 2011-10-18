@@ -1,9 +1,6 @@
 package waffle
 
-import (
-	"os"
-	"rpc"
-)
+import ()
 
 type Node interface {
 	InitNode(string, string)
@@ -13,21 +10,24 @@ type Node interface {
 }
 
 type node struct {
-	addr   string
-	port   string
-	pmap   map[uint64]string      // partition map (partition id -> worker id)
-	wmap   map[string]string      // worker map (worker id -> worker address)
-	cls    map[string]*rpc.Client // client map (worker id -> rpc client)
-	partFn func(string) uint64
-	s      chan interface{}
+	addr         string
+	port         string
+	partitionMap map[uint64]string // partition map (partition id -> worker id)
+	workerMap    map[string]string // worker map (worker id -> worker address)
+	partFn       func(string) uint64
+	s            chan interface{}
 }
 
-func (n *node) Addr() string {
+func (n *node) Host() string {
 	return n.addr
 }
 
 func (n *node) Port() string {
 	return n.port
+}
+
+func (n *node) Workers() map[string]string {
+	return n.workerMap
 }
 
 func dumbHashFn(id string) uint64 {
@@ -39,32 +39,15 @@ func dumbHashFn(id string) uint64 {
 }
 
 func (n *node) getPartitionOf(id string) uint64 {
-	return n.partFn(id) % uint64(len(n.pmap))
+	return n.partFn(id) % uint64(len(n.partitionMap))
 }
 
 func (n *node) InitNode(addr, port string) {
 	n.addr = addr
 	n.port = port
-	n.cls = make(map[string]*rpc.Client)
 	n.partFn = dumbHashFn
 	n.s = make(chan interface{}, 1)
 	n.s <- 1
-}
-
-func (n *node) cl(wid string) (*rpc.Client, os.Error) {
-	<-n.s
-	defer func() { n.s <- 1 }()
-	if n.cls == nil {
-		n.cls = make(map[string]*rpc.Client)
-	}
-	if _, ok := n.cls[wid]; !ok {
-		cl, err := rpc.DialHTTP("tcp", n.wmap[wid])
-		if err != nil {
-			return nil, err
-		}
-		n.cls[wid] = cl
-	}
-	return n.cls[wid], nil
 }
 
 func (n *node) SetVertexPartitionFn(fn func(string) uint64) {

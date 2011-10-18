@@ -1,13 +1,12 @@
 package waffle
 
 import (
-	"http"
 	"log"
 	"net"
 	"os"
-	"rpc"
 	"sort"
 	"time"
+	"sync"
 )
 
 type workerInfo struct {
@@ -37,12 +36,12 @@ type Master struct {
 
 	config masterConfig
 
-	state     int
+	phaseId   int
 	regch     chan byte
-	loadch    chan interface{}
-	workch    chan interface{}
-	writech   chan interface{}
-	preparech chan interface{}
+	loadch    chan *PhaseSummary
+	workch    chan *PhaseSummary
+	writech   chan *PhaseSummary
+	preparech chan *PhaseSummary
 	superstep uint64
 	startTime int64
 	endTime   int64
@@ -52,26 +51,23 @@ type Master struct {
 	widFn        func(string, string) string
 	checkpointFn func(uint64) bool
 
-	logger *log.Logger
-
 	// job stats
 	as          chan byte
 	activeVerts uint64
 	numVertices uint64
 	sentMsgs    uint64
+
+	rpcServ   MasterRpcServer
+	rpcClient MasterRpcClient
 }
 
 // For now, this is the barrier that the workers "enter" for sync
-func (m *Master) barrier(ch chan interface{}) {
+func (m *Master) barrier(ch chan *PhaseSummary) {
 	bmap := make(map[string]interface{})
 	for e := range ch {
-		switch t := e.(type) {
-		case string:
-			bmap[t] = nil
-		case os.Error:
-			panic(t)
-		}
-		if len(bmap) == len(m.wmap) {
+		bmap[e.WorkerId] = nil
+		log.Printf("Phase took %d on %s", e.PhaseTime, e.WorkerId)
+		if len(bmap) == len(m.workerMap) {
 			return
 		}
 	}
@@ -81,11 +77,10 @@ func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, regi
 	m := &Master{
 		regch:     make(chan byte, 1),
 		as:        make(chan byte, 1),
-		loadch:    make(chan interface{}),
-		workch:    make(chan interface{}),
-		writech:   make(chan interface{}),
-		preparech: make(chan interface{}),
-		logger:    log.New(os.Stdout, "(master)["+net.JoinHostPort(addr, port)+"]["+jobId+"]: ", 0),
+		loadch:    make(chan *PhaseSummary),
+		workch:    make(chan *PhaseSummary),
+		writech:   make(chan *PhaseSummary),
+		preparech: make(chan *PhaseSummary),
 		wInfo:     make(map[string]*workerInfo),
 	}
 
@@ -123,6 +118,7 @@ func (m *Master) resetJobInfo() {
 	m.sentMsgs = 0
 	m.numVertices = 0
 	m.as <- 1
+	log.Println("reset complete")
 }
 
 // Update the stats from the current step
@@ -134,16 +130,22 @@ func (m *Master) addActiveInfo(activeVerts, numVertices, sentMsgs uint64) {
 	m.as <- 1
 }
 
+func (m *Master) collectSummaryInfo(summary *PhaseSummary) {
+	m.addActiveInfo(summary.ActiveVerts, summary.NumVerts, summary.SentMsgs)
+}
+
+func (m *Master) SetRpcClient(c MasterRpcClient) {
+	m.rpcClient = c
+}
+
+func (m *Master) SetRpcServer(s MasterRpcServer) {
+	m.rpcServ = s
+}
+
 // Init RPC
 func (m *Master) init() os.Error {
-	rpc.Register(m)
-	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", net.JoinHostPort(m.addr, m.port))
-	if e != nil {
-		panic(e.String())
-	}
-	go http.Serve(l, nil)
-	m.logger.Printf("Init complete")
+	m.rpcServ.Start(m)
+	m.rpcClient.Init()
 	return nil
 }
 
@@ -171,135 +173,145 @@ func (m *Master) prepare() os.Error {
 }
 
 func (m *Master) ekg(id string) {
-	msg := &BasicMasterMsg{JobId: m.config.jobId}
-	cl, e := m.cl(id)
-	if e != nil {
-		panic(e.String())
-	}
-	info := m.wInfo[id]
-	var r Resp
-	for {
-		call := cl.Go("Worker.Healthcheck", msg, &r, nil)
-		// return or timeout
-		select {
-		case <-call.Done:
-			if call.Error != nil {
-				panic(call.Error)
+	/*
+		msg := &BasicMasterMsg{JobId: m.config.jobId}
+		cl, e := m.cl(id)
+		if e != nil {
+			panic(e.String())
+		}
+		info := m.wInfo[id]
+		var r Resp
+		for {
+			call := cl.Go("Worker.Healthcheck", msg, &r, nil)
+			// return or timeout
+			select {
+			case <-call.Done:
+				if call.Error != nil {
+					panic(call.Error)
+				}
+			case <-time.After(m.config.heartbeatTimeout):
+				// handle fault
 			}
-		case <-time.After(m.config.heartbeatTimeout):
-			// handle fault
-		}
 
-		// wait for the next interval
-		select {
-		case <-info.ekgch:
-			return
-		case <-time.Tick(m.config.heartbeatInterval):
-			// resetTimeout
+			// wait for the next interval
+			select {
+			case <-info.ekgch:
+				return
+			case <-time.Tick(m.config.heartbeatInterval):
+				// resetTimeout
+			}
 		}
-	}
+	*/
 }
 
-func (m *Master) Register(args *RegisterMsg, resp *RegisterResp) os.Error {
-	// lock around the register operations
+func (m *Master) RegisterWorker(addr, port string) (string, string, os.Error) {
 	<-m.regch
 	defer func() { m.regch <- 1 }()
 
-	addr, port := args.Addr, args.Port
-	m.logger.Printf("Trying to register %s:%s", addr, port)
+	log.Printf("Attempting to register %s:%s", addr, port)
 
-	// generate a unique worker id for this worker, then put the host information in the worker map
-	wid := m.widFn(addr, port)
-	m.wmap[wid] = net.JoinHostPort(addr, port)
-	// create a worker info entry for this worker
-	m.wInfo[wid] = newWorkerInfo()
+	workerId := m.widFn(addr, port)
+	if _, ok := m.workerMap[workerId]; ok {
+		log.Printf("%s already registered, overwriting")
+	}
+	m.workerMap[workerId] = net.JoinHostPort(addr, port)
+	m.wInfo[workerId] = newWorkerInfo()
 
-	resp.JobId = m.config.jobId
-	resp.Wid = wid
+	jobId := m.config.jobId
 
-	// start running ekg on this worker
-	go m.ekg(wid)
+	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, jobId)
+	go m.ekg(workerId)
 
-	m.logger.Printf("Registered %s:%s as %s", addr, port, wid)
-	return nil
+	return workerId, jobId, nil
 }
 
 func (m *Master) registerWorkers() os.Error {
-	m.logger.Printf("Starting registration phase")
+	log.Printf("Starting registration phase")
 
-	m.wmap = make(map[string]string)
+	m.workerMap = make(map[string]string)
 
 	// Should do this in a more Go-ish way, maybe with a select statement?
-	for timer := 0; uint64(len(m.wmap)) < m.config.minWorkers || int64(timer) < m.config.registerWait; timer += 1 * 1e9 {
-		<-time.Tick(1 * 1e9)
+	for timer := 0; uint64(len(m.workerMap)) < m.config.minWorkers || int64(timer) < m.config.registerWait; timer += 1 * 1e9 {
+		<-time.After(1 * 1e9)
 	}
 
-	if len(m.wmap) == 0 || uint64(len(m.wmap)) < m.config.minWorkers && m.config.registerWait > 0 {
+	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.config.minWorkers && m.config.registerWait > 0 {
 		return os.NewError("Not enough workers registered")
 	}
 
-	m.logger.Printf("Registration phase complete")
+	log.Printf("Registration phase complete")
 	return nil
 }
 
 func (m *Master) determinePartitions() {
-	m.logger.Printf("Designating partitions")
+	log.Printf("Designating partitions")
 
 	// iteration order undefined across platforms, pull out values and sort.
-	workers := make([]string, 0, len(m.wmap))
-	for id := range m.wmap {
+	workers := make([]string, 0, len(m.workerMap))
+	for id := range m.workerMap {
 		workers = append(workers, id)
 	}
 	sort.Strings(workers)
 
-	m.pmap = make(map[uint64]string)
+	m.partitionMap = make(map[uint64]string)
 	p := 0
 	for _, id := range workers {
 		for i := 0; i < int(m.config.partsPerWorker); i, p = i+1, p+1 {
-			m.pmap[uint64(p)] = id
+			m.partitionMap[uint64(p)] = id
 		}
 	}
 
-	m.logger.Printf("Assigned %d partitions to %d workers", len(m.pmap), len(m.wmap))
+	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerMap))
 
 	// Should be a seperate function/phase
-	m.logger.Printf("Distributing worker and partition information")
+	log.Printf("Distributing worker and partition information")
 
-	// push the worker topology to all of the workers registered for this job
-	distch := make(chan interface{})
-	// XXX maybe this should go in the opposite direction?  let the workers request the topology in a prepare step?
-	if e := m.sendToAllWorkers("Worker.PushTopology", &TopologyInfo{JobId: m.config.jobId, Pmap: m.pmap, Wmap: m.wmap}, distch); e != nil {
-		panic(e)
+	var wg sync.WaitGroup
+	for _, workerAddr := range workers {
+		addr := workerAddr
+		wg.Add(1)
+		go func() {
+			if err := m.rpcClient.PushTopology(addr,
+				&TopologyInfo{JobId: m.config.jobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}); err != nil {
+				panic(err)
+			}
+			wg.Done()
+		}()
 	}
-	m.barrier(distch)
+	wg.Wait()
 
-	m.logger.Printf("Done distributing worker and partition info")
+	log.Printf("Done distributing worker and partition info")
 }
 
-// Send a message to all of the workers we know of, using waitMap as our sync map.  If waitCh isn't nil, send the worker id on it
-// once the rpc call is complete.
-func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interface{}) os.Error {
-	for id := range m.wmap {
-		wid := id
-		cl, e := m.cl(wid)
-		if e != nil {
-			return e
-		}
+func (m *Master) EnterBarrier(summary *PhaseSummary) os.Error {
+	go m.enterBarrier(summary)
+	return nil
+}
+
+func (m *Master) enterBarrier(summary *PhaseSummary) {
+	m.collectSummaryInfo(summary)
+	switch summary.PhaseId {
+	case phaseLOAD1, phaseLOAD2:
+		m.loadch <- summary
+	case phaseSTEPPREPARE:
+		m.preparech <- summary
+	case phaseSUPERSTEP:
+		m.workch <- summary
+	case phaseWRITE:
+		m.writech <- summary
+	default:
+	}
+}
+
+func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
+	for _, workerAddr := range m.workerMap {
+		addr := workerAddr
 		go func() {
-			var r Resp
-			if e := cl.Call(call, msg, &r); e != nil {
-				panic(e)
-			}
-			if r != OK {
-				panic("Response from was not OK")
-			}
-			if waitCh != nil {
-				waitCh <- wid
+			if err := m.rpcClient.ExecutePhase(addr, exec); err != nil {
+				panic(err)
 			}
 		}()
 	}
-
-	return nil
 }
 
 // Data loading is actually a two step phase: first, a worker will load the vertices from its designated
@@ -307,143 +319,103 @@ func (m *Master) sendToAllWorkers(call string, msg CoordMsg, waitCh chan interfa
 // that were sent to it during the previous phase (because they did not belong on the worker that loaded
 // them).
 func (m *Master) dataLoadPhase1() os.Error {
-	m.logger.Printf("Instructing workers to do first phase of data load")
+	log.Printf("Instructing workers to do first phase of data load")
 
-	msg := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.DataLoad", msg, nil); e != nil {
-		panic(e)
-	}
+	exec := &PhaseExec{PhaseId: phaseLOAD1}
+	exec.JobId = m.config.jobId
+	m.sendExecToAllWorkers(exec)
 	m.barrier(m.loadch)
 
-	m.logger.Printf("Done first phase of data load")
-	return nil
-}
-
-func (m *Master) NotifyInitialDataLoadComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
-	*resp = OK
-	go m.handleActiveInfoUpdate(args, m.loadch)
+	log.Printf("Done first phase of data load")
 	return nil
 }
 
 func (m *Master) dataLoadPhase2() os.Error {
-	m.logger.Printf("Instructing workers to do second phase of data load")
+	log.Printf("Instructing workers to do second phase of data load")
 
-	msg := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.SecondaryDataLoad", msg, nil); e != nil {
-		panic(e)
-	}
+	exec := &PhaseExec{PhaseId: phaseLOAD2}
+	exec.JobId = m.config.jobId
+	m.sendExecToAllWorkers(exec)
 	m.barrier(m.loadch)
 
-	m.logger.Printf("Done second phase of data load")
+	log.Printf("Done second phase of data load")
 	return nil
 }
 
-func (m *Master) NotifySecondaryDataLoadComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
-	*resp = OK
-	go m.handleActiveInfoUpdate(args, m.loadch)
-	return nil
-}
-
-// Deals with a WorkerInfoMsg
-func (m *Master) handleActiveInfoUpdate(msg *WorkerInfoMsg, ch chan interface{}) {
-	if !msg.Success {
-		// handle computation errors
-	} else {
-		m.addActiveInfo(msg.ActiveVerts, msg.NumVerts, msg.SentMsgs)
-	}
-	ch <- msg.Wid
-}
-
-func (m *Master) completeJob() os.Error {
-	m.logger.Printf("Instructing workers to write results")
-
-	msg := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.WriteResults", msg, nil); e != nil {
-		panic(e)
-	}
-	m.barrier(m.writech)
-
-	m.logger.Printf("Workers have written results")
-	return nil
-}
-
-func (m *Master) NotifyWriteResultsComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
-	*resp = OK
-	m.writech <- args.Wid
-	return nil
-}
-
-func (m *Master) endWorkers() os.Error {
-	if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.config.jobId}, nil); e != nil {
-		panic(e)
-	}
-	// don't wait for a notify on this call	
-	m.logger.Printf("Killing ekgs and closing worker rpc clients")
-	for wid, info := range m.wInfo {
-		info.ekgch <- 1
-		if cl, e := m.cl(wid); e == nil {
-			cl.Close()
-		}
-	}
-	return nil
-}
-
-// run the job
+// run supersteps until there are no more active vertices or queued messages
 func (m *Master) compute() os.Error {
-	m.logger.Printf("Starting computation")
+	log.Printf("Starting computation")
 
-	m.logger.Printf("Active verts = %d", m.activeVerts)
+	log.Printf("Active verts = %d", m.activeVerts)
 	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		m.prepareWorkers()
 		m.execStep()
 	}
 
-	m.logger.Printf("Computation complete")
+	log.Printf("Computation complete")
 	return nil
 }
 
+// prepare workers for the next superstep
 func (m *Master) prepareWorkers() os.Error {
-	msg := &BasicMasterMsg{JobId: m.config.jobId}
-	if e := m.sendToAllWorkers("Worker.PrepareForSuperstep", msg, nil); e != nil {
-		panic(e)
+	exec := &PhaseExec{
+		PhaseId: phaseSTEPPREPARE,
 	}
+	exec.JobId = m.config.jobId
+
+	m.sendExecToAllWorkers(exec)
 	m.barrier(m.preparech)
 
 	return nil
 }
 
-func (m *Master) NotifyPrepareComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
-	*resp = OK
-	go func() {
-		m.preparech <- args.Wid
-	}()
-	return nil
-}
-
-// super step
+// superstep
 func (m *Master) execStep() os.Error {
-	m.logger.Printf("Starting step %d -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
+	log.Printf("Starting step %d -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
 
-	msg := &SuperstepMsg{
-		JobId:      m.config.jobId,
+	exec := &PhaseExec{
+		PhaseId:    phaseSUPERSTEP,
 		Superstep:  m.superstep,
 		NumVerts:   m.numVertices,
 		Checkpoint: m.checkpointFn(m.superstep),
 	}
+	exec.JobId = m.config.jobId
 
 	m.resetJobInfo()
-	if e := m.sendToAllWorkers("Worker.Superstep", msg, nil); e != nil {
-		panic(e)
-	}
+	m.sendExecToAllWorkers(exec)
+
 	m.barrier(m.workch)
 
 	return nil
 }
 
-func (m *Master) NotifyStepComplete(args *WorkerInfoMsg, resp *Resp) os.Error {
-	*resp = OK
-	go m.handleActiveInfoUpdate(args, m.workch)
+// instruct workers to write results
+func (m *Master) completeJob() os.Error {
+	log.Printf("Instructing workers to write results")
+	exec := &PhaseExec{PhaseId: phaseWRITE}
+	m.sendExecToAllWorkers(exec)
+	m.barrier(m.writech)
+
+	log.Printf("Workers have written results")
+	return nil
+}
+
+// shutdown workers
+func (m *Master) endWorkers() os.Error {
+	/*
+		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.config.jobId}, nil); e != nil {
+			panic(e)
+		}
+		// don't wait for a notify on this call	
+		log.Printf("Killing ekgs and closing worker rpc clients")
+		for wid, info := range m.wInfo {
+			info.ekgch <- 1
+			if cl, e := m.cl(wid); e == nil {
+				cl.Close()
+			}
+		}
+	*/
 	return nil
 }
 
@@ -460,7 +432,7 @@ func (m *Master) Run() {
 	m.prepare()
 	m.compute()
 	m.finish()
-	m.logger.Printf("Done")
+	log.Printf("Done")
 
-	m.logger.Printf("Job run time (post registration) was %d seconds", m.endTime-m.startTime)
+	log.Printf("Job run time (post registration) was %d seconds", m.endTime-m.startTime)
 }

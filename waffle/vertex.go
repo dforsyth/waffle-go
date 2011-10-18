@@ -81,7 +81,7 @@ func (v *VertexBase) AddVertex(vert Vertex) {
 }
 
 func (v *VertexBase) Superstep() uint64 {
-	return v.part.(*Partition).worker.superstep
+	return v.part.(*Partition).worker.stepInfo.superstep
 }
 
 func (v *VertexBase) SendMessageTo(dest string, msg Msg) {

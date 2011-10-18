@@ -6,7 +6,7 @@ import (
 
 type Loader interface {
 	Init(*Worker)
-	Load() (int, os.Error)
+	Load() (uint64, os.Error)
 }
 
 type LoaderBase struct {

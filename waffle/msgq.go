@@ -54,7 +54,7 @@ func (q *InMsgQ) clear() {
 type OutMsgQ struct {
 	s      chan byte
 	out    map[string][]Msg
-	w      *Worker
+	worker *Worker
 	thresh int64
 	sent   uint64
 	wait   sync.WaitGroup
@@ -64,7 +64,7 @@ func newOutMsgQ(w *Worker, thresh int64) *OutMsgQ {
 	q := &OutMsgQ{
 		s:      make(chan byte, 1),
 		out:    make(map[string][]Msg),
-		w:      w,
+		worker: w,
 		thresh: thresh,
 		sent:   0,
 	}
@@ -82,24 +82,18 @@ func (q *OutMsgQ) reset() {
 }
 
 func (q *OutMsgQ) sendMsgs(wid string, msgs []Msg) os.Error {
-	cl, e := q.w.cl(wid)
-	if e != nil {
-		return e
-	}
-
-	// combine msgs if possible
-	for _, combiner := range q.w.combiners {
+	for _, combiner := range q.worker.combiners {
 		msgs = combiner.Combine(msgs)
 	}
 
-	if wid == q.w.wid {
-		q.w.inq.addMsgs(msgs)
+	if q.worker.WorkerId() == wid {
+		q.worker.inq.addMsgs(msgs)
 	} else {
-		var r Resp
-		if e = cl.Call("Worker.MsgHandler", msgs, &r); e != nil {
-			return e
+		if err := q.worker.rpcClient.SendMessages(wid, msgs); err != nil {
+			return err
 		}
 	}
+
 	q.sent += uint64(len(msgs))
 	return nil
 }
@@ -119,8 +113,8 @@ func (q *OutMsgQ) sendMsgsAsync(id string, msgs []Msg) chan interface{} {
 func (q *OutMsgQ) addMsg(msg Msg) {
 	<-q.s
 	defer func() { q.s <- 1 }()
-	pid := q.w.getPartitionOf(msg.DestVertId())
-	wid := q.w.pmap[pid]
+	pid := q.worker.getPartitionOf(msg.DestVertId())
+	wid := q.worker.partitionMap[pid]
 	if _, ok := q.out[wid]; !ok {
 		q.out[wid] = make([]Msg, 0)
 	}

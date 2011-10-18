@@ -42,7 +42,7 @@ func (q *InVertexQ) clear() {
 type OutVertexQ struct {
 	verts  map[string][]Vertex
 	s      chan byte
-	w      *Worker
+	worker *Worker
 	thresh int64
 	wait   sync.WaitGroup
 }
@@ -51,7 +51,7 @@ func newOutVertexQ(w *Worker, thresh int64) *OutVertexQ {
 	q := &OutVertexQ{
 		verts:  make(map[string][]Vertex, 0),
 		s:      make(chan byte, 1),
-		w:      w,
+		worker: w,
 		thresh: thresh,
 	}
 	q.s <- 1
@@ -60,8 +60,8 @@ func newOutVertexQ(w *Worker, thresh int64) *OutVertexQ {
 
 func (q *OutVertexQ) addVertex(v Vertex) {
 	<-q.s
-	pid := q.w.getPartitionOf(v.VertexId())
-	wid := q.w.pmap[pid]
+	pid := q.worker.getPartitionOf(v.VertexId())
+	wid := q.worker.partitionMap[pid]
 	if _, ok := q.verts[wid]; !ok {
 		q.verts[wid] = make([]Vertex, 0)
 	}
@@ -101,17 +101,11 @@ func (q *OutVertexQ) sendVerticesAsync(id string, verts []Vertex) chan interface
 }
 
 func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
-	cl, e := q.w.cl(id)
-	if e != nil {
-		return e
-	}
-	if id == q.w.wid {
-		q.w.vinq.addVertices(verts)
+
+	if id == q.worker.WorkerId() {
+		q.worker.vinq.addVertices(verts)
 	} else {
-		var r Resp
-		if e = cl.Call("Worker.QueueVertices", verts, &r); e != nil {
-			return e
-		}
+		q.worker.rpcClient.SendVertices(id, verts)
 	}
 	return nil
 }

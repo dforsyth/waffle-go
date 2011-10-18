@@ -21,12 +21,12 @@ TODO:
 	Deployment utilities
 	Documentation
 	Default server in package
-	RPC interface, RPC re-work
+	RPC interface, RPC re-work (add a thrift option in syrup)
 	Barriers/cluster coordination level?
 	Monitoring/web interface
 	Fault tolerance
 	Duplicate code
 	Multiple jobs
 	Mesos?
-	Streaming?
+	Streaming (syrup)?
 

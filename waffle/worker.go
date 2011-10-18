@@ -1,19 +1,37 @@
 package waffle
 
 import (
-	"http"
 	"log"
 	"net"
 	"os"
-	"rpc"
 	"sync"
-	"gob"
+	"time"
 )
 
-type workerStat struct {
+type phaseStat struct {
+	startTime int64
+	endTime   int64
+}
+
+func (s *phaseStat) reset() {
+	s.startTime = 0
+	s.endTime = 0
+}
+
+func (s *phaseStat) start() {
+	s.startTime = time.Seconds()
+}
+
+func (s *phaseStat) end() {
+	s.endTime = time.Seconds()
+}
+
+type stepInfo struct {
 	activeVertices uint64
 	numVertices    uint64
 	sentMsgs       uint64
+	superstep      uint64
+	checkpoint     bool
 }
 
 type jobStat struct {
@@ -34,22 +52,22 @@ func (c *Component) Worker() *Worker {
 
 type Worker struct {
 	node
-	wid   string
-	jobId string
+	workerId string
+	jobId    string
 
-	maddr string
-	mcl   *rpc.Client
+	mhost string
+	mport string
 
 	state int
 	// Current and previous state
-	checkpoint bool
-	superstep  uint64
+	// checkpoint bool
+	// superstep  uint64
 
 	lastCheckpoint bool
 	lastSuperstep  uint64
 
 	numVertices uint64
-	workerStats workerStat
+	phaseStats  phaseStat
 	jobStats    jobStat
 
 	// Msg queues
@@ -59,15 +77,21 @@ type Worker struct {
 	vinq  *InVertexQ
 	voutq *OutVertexQ
 
-	parts map[uint64]*Partition
-
-	logger *log.Logger
+	partitions map[uint64]*Partition
 
 	loader       Loader
 	resultWriter ResultWriter
 	persister    Persister
 	aggregators  []Aggregator
 	combiners    []Combiner
+
+	stepInfo, lastStepInfo *stepInfo
+
+	// phases    map[int]Phase
+	rpcClient WorkerRpcClient
+	rpcServ   WorkerRpcServer
+
+	evCh chan *PhaseSummary
 }
 
 // Worker state
@@ -84,9 +108,8 @@ const (
 
 func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
 	w := &Worker{
-		logger: log.New(os.Stdout, "(worker)["+net.JoinHostPort(addr, port)+"]: ", 0),
-		state:  NONE,
-		parts:  make(map[uint64]*Partition),
+		state:      NONE,
+		partitions: make(map[uint64]*Partition),
 	}
 	w.InitNode(addr, port)
 	w.msgs = newInMsgQ()
@@ -95,27 +118,22 @@ func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
 	w.vinq = newInVertexQ()
 	w.voutq = newOutVertexQ(w, vertThreshold)
 
-	// Register the base types with gob
-	gob.Register(&VertexBase{})
-	gob.Register(&EdgeBase{})
-	gob.Register(&MsgBase{})
+	w.stepInfo, w.lastStepInfo = &stepInfo{}, &stepInfo{}
+
 	return w
 }
 
-// Type registration for the gob encoder/decoder
-func (w *Worker) RegisterVertex(v Vertex) {
-	gob.Register(v)
+func (w *Worker) WorkerId() string {
+	return w.workerId
 }
 
-func (w *Worker) RegisterMsg(m Msg) {
-	gob.Register(m)
+func (w *Worker) SetRpcClient(c WorkerRpcClient) {
+	w.rpcClient = c
 }
 
-func (w *Worker) RegisterEdge(e Edge) {
-	gob.Register(e)
+func (w *Worker) SetRpcServer(s WorkerRpcServer) {
+	w.rpcServ = s
 }
-
-// Setters for loading and writing data
 
 // The loader handles loading vertices and edges from the initial data source
 func (w *Worker) SetLoader(l Loader) {
@@ -133,6 +151,7 @@ func (w *Worker) SetPersister(p Persister) {
 	w.persister = p
 }
 
+// Add a message combiner
 func (w *Worker) AddCombiner(c Combiner) {
 	if w.combiners == nil {
 		w.combiners = make([]Combiner, 0)
@@ -141,33 +160,17 @@ func (w *Worker) AddCombiner(c Combiner) {
 }
 
 // XXX temp function until theres some sort of discovery mechanism
-func (w *Worker) SetMasterAddress(addr string) {
-	w.maddr = addr
-}
-
-func (w *Worker) MsgHandler(msgs []Msg, resp *Resp) os.Error {
-	go w.inq.addMsgs(msgs)
-	*resp = OK
-	return nil
-}
-
-func (w *Worker) genWorkerInfoMsg(success bool) *WorkerInfoMsg {
-	m := &WorkerInfoMsg{ActiveVerts: w.workerStats.activeVertices,
-		NumVerts: w.workerStats.numVertices,
-		SentMsgs: w.workerStats.sentMsgs,
-		Success:  success,
-	}
-	m.Wid = w.wid
-	return m
+func (w *Worker) SetMasterAddress(host, port string) {
+	w.mhost, w.mport = host, port
 }
 
 func (w *Worker) Partitions() map[uint64]*Partition {
-	return w.parts
+	return w.partitions
 }
 
 func (w *Worker) NumActiveVertices() uint64 {
 	var sum uint64 = 0
-	for _, p := range w.parts {
+	for _, p := range w.partitions {
 		sum += p.numActiveVertices()
 	}
 	return sum
@@ -175,7 +178,7 @@ func (w *Worker) NumActiveVertices() uint64 {
 
 func (w *Worker) NumVertices() uint64 {
 	var sum uint64 = 0
-	for _, p := range w.parts {
+	for _, p := range w.partitions {
 		sum += p.numVertices()
 	}
 	return sum
@@ -185,39 +188,60 @@ func (w *Worker) NumSentMsgs() uint64 {
 	return w.outq.numSent()
 }
 
-func (w *Worker) notifyMaster(call string) os.Error {
-	var r Resp
-	if err := w.mcl.Call(call, w.genWorkerInfoMsg(true), &r); err != nil {
-		return err
+// Expose for RPC interface
+func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
+	// Reset phase stats
+	w.phaseStats.reset()
+	w.phaseStats.start()
+
+	// Determine the phaseId and dispatch
+	switch exec.PhaseId {
+	case phaseLOAD1:
+		go w.executeLoadDirect()
+	case phaseLOAD2:
+		go w.executeLoadQueue()
+	case phaseSTEPPREPARE:
+		go w.executeStepPrepare()
+	case phaseSUPERSTEP:
+		go w.executeSuperstep(exec.Superstep, exec.Checkpoint)
+	case phaseWRITE:
+		go w.executeWriteResults()
+	default:
+		panic(os.NewError("No phase identified"))
 	}
 	return nil
 }
 
 func (w *Worker) Run() {
-	done := make(chan byte)
-	w.init()
-	w.discoverMaster()
-	w.register()
+	w.rpcClient.Init()
+	w.rpcServ.Start(w)
+
+	// w.init()
+	if err := w.discoverMaster(); err != nil {
+		panic(err)
+	}
+
+	if err := w.registerForJob(); err != nil {
+		panic(err)
+	}
 	// XXX Just die if registration didn't go through
 	if w.jobId == "" {
-		w.logger.Printf("No job, bye bye")
+		log.Printf("No job, bye bye")
 		return
 	}
-	w.state = WAIT
-	<-done
+	w.phaseSummaryLoop()
 }
 
-func (w *Worker) init() os.Error {
-	w.state = INIT
-	rpc.Register(w)
-	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", net.JoinHostPort(w.addr, w.port))
-	if e != nil {
-		return e
+func (w *Worker) phaseSummaryLoop() {
+	w.evCh = make(chan *PhaseSummary)
+	for ev := range w.evCh {
+		// end the phase and fill in some of the summary
+		w.phaseStats.end()
+
+		ev.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
+		ev.WorkerId = w.workerId
+		w.rpcClient.PhaseResult(net.JoinHostPort(w.mhost, w.mport), ev)
 	}
-	go http.Serve(l, nil)
-	w.logger.Printf("init complete")
-	return nil
 }
 
 func (w *Worker) discoverMaster() os.Error {
@@ -225,202 +249,108 @@ func (w *Worker) discoverMaster() os.Error {
 	return nil
 }
 
-func (w *Worker) register() os.Error {
-	w.state = REGISTER
-	mcl, err := rpc.DialHTTP("tcp", w.maddr)
-	if err != nil {
-		w.logger.Printf("Error dialing master:", err)
-		return err
+// Register step
+func (w *Worker) registerForJob() (err os.Error) {
+	log.Println("Trying to register")
+	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.mhost, w.mport), w.Host(), w.Port()); err != nil {
+		return
 	}
-	w.mcl = mcl
+	log.Printf("Registered as %s for job %s", w.workerId, w.jobId)
+	return
+}
 
-	var r RegisterResp
-	if err = w.mcl.Call("Master.Register", &RegisterMsg{Addr: w.addr, Port: w.port}, &r); err != nil {
-		w.logger.Printf("Error registering with master:", err)
-		return err
-	}
-	if len(r.JobId) > 0 {
-		w.wid = r.Wid
-		w.jobId = r.JobId
-		w.logger.Printf("Registered for %s as %s", w.jobId, w.wid)
-	}
-	w.logger.Printf("Done registering")
+func (w *Worker) cleanup() os.Error {
+	// w.rpcClient.Cleanup()
+	// w.rpcServ.Cleanup()
 	return nil
 }
 
-func (w *Worker) Healthcheck(args *BasicMasterMsg, resp *Resp) os.Error {
-	*resp = OK
-	return nil
-}
+// Expose for RPC interface
+func (w *Worker) SetJobTopology(workerMap map[string]string, partitionMap map[uint64]string) {
+	w.workerMap = workerMap
+	w.partitionMap = partitionMap
 
-func (w *Worker) PushTopology(args *TopologyInfo, resp *Resp) os.Error {
-	w.logger.Printf("setting worker info")
-	if args.JobId != w.jobId {
-		panic("JobId mismatch")
-	}
-	w.wmap = args.Wmap
-	w.pmap = args.Pmap
-	*resp = OK
-	w.setupPartitions()
-	return nil
-}
-
-// Create the partitions assigned to this worker
-func (w *Worker) setupPartitions() {
-	for pid, wid := range w.pmap {
-		if wid == w.wid {
-			w.parts[pid] = NewPartition(pid, w)
+	for pid, wid := range w.partitionMap {
+		if wid == w.workerId {
+			w.partitions[pid] = NewPartition(pid, w)
 		}
 	}
 }
 
-func (w *Worker) DataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
-	if args.JobId != w.jobId {
-		*resp = NOT_OK
-		return nil
-	}
-	*resp = OK
-	go w.loadVertices()
-	return nil
-}
+func (w *Worker) executeLoadDirect() {
+	var summary PhaseSummary
 
-func (w *Worker) loadVertices() os.Error {
-	w.logger.Printf("Worker %s is loading vertices from loader", w.wid)
-	// load verts
-	loaded, e := w.loader.Load()
-	if e != nil {
-		panic(e.String())
+	if w.loader == nil {
+		summary.addError(os.NewError("Worker has no loader"))
+		w.evCh <- &summary
+		return
 	}
-	w.logger.Printf("Worker %s loaded %d vertices", w.wid, loaded)
-	// flush the voutq before we report completion
+
+	loaded, err := w.loader.Load()
+	if err != nil {
+		summary.addError(err)
+		w.evCh <- &summary
+		return
+	}
+
 	w.voutq.flush()
 	w.voutq.wait.Wait()
-	w.collectWorkerInfo()
-	if err := w.notifyMaster("Master.NotifyInitialDataLoadComplete"); err != nil {
-		return err
-	}
-	return nil
+
+	summary.NumVerts = loaded
+	summary.PhaseId = phaseLOAD1
+
+	log.Println("LoadDirect complete")
+
+	w.evCh <- &summary
 }
 
-func (w *Worker) SecondaryDataLoad(args *BasicMasterMsg, resp *Resp) os.Error {
-	go w.loadMoreVertices()
-	*resp = OK
-	return nil
-}
-
-func (w *Worker) loadMoreVertices() os.Error {
-	w.logger.Printf("Worker %s is loading vertices from vinq", w.wid)
-	loaded := 0
+func (w *Worker) executeLoadQueue() {
+	var loaded uint64 = 0
 	for _, v := range w.vinq.verts {
 		w.addToPartition(v)
 		loaded++
 	}
-	w.logger.Printf("Worker %s loaded %d vertices from vinq", w.wid, loaded)
-	w.vinq.clear()
-	w.collectWorkerInfo()
-	if err := w.notifyMaster("Master.NotifySecondaryDataLoadComplete"); err != nil {
-		return err
-	}
-	w.logger.Printf("Done loading more vertices")
-	return nil
+
+	var summary PhaseSummary
+
+	summary.PhaseId = phaseLOAD2
+	summary.NumVerts = loaded
+	summary.ActiveVerts = w.NumActiveVertices()
+
+	log.Println("LoadQueue complete")
+
+	w.evCh <- &summary
 }
 
 func (w *Worker) addToPartition(v Vertex) os.Error {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
-	wid := w.pmap[pid]
-	if wid == w.wid {
-		w.parts[pid].addVertex(v)
+	wid := w.partitionMap[pid]
+	if wid == w.workerId {
+		w.partitions[pid].addVertex(v)
 	} else {
 		w.voutq.addVertex(v)
 	}
 	return nil
 }
 
-func (w *Worker) QueueVertices(args []Vertex, resp *Resp) os.Error {
-	*resp = OK
-	w.vinq.addVertices(args)
-	return nil
-}
-
-func (w *Worker) PrepareForSuperstep(args *BasicMasterMsg, resp *Resp) os.Error {
-	*resp = OK
-	go w.prepareForSuperstep()
-	return nil
-}
-
-// This is step is just to let us swap message queues.  In the future I should
-// probably just put a superstep value in Msgs so this is unnecessary?
-func (w *Worker) prepareForSuperstep() os.Error {
+// Expose for RPC iterface
+func (w *Worker) executeStepPrepare() {
 	w.msgs, w.inq = w.inq, w.msgs
 	w.inq.clear()
-
-	if err := w.notifyMaster("Master.NotifyPrepareComplete"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (w *Worker) Superstep(args *SuperstepMsg, resp *Resp) os.Error {
-	if w.superstep != 0 && w.superstep+1 != args.Superstep {
-		*resp = NOT_OK
-		return nil
-	}
-	// reset the outq to 0
 	w.outq.reset()
-	w.lastSuperstep = w.superstep
-	w.lastCheckpoint = w.checkpoint
+	w.lastStepInfo, w.stepInfo = w.stepInfo, w.lastStepInfo
 
-	// set up next step
-	w.superstep = args.Superstep
-	w.checkpoint = args.Checkpoint
-	// collect info from master
-	w.jobStats.numVertices = args.NumVerts
-	*resp = OK
-	w.logger.Printf("Firing step %d.  checkpoint = %t", w.superstep, w.checkpoint)
-	go w.execStep()
-	return nil
-}
+	log.Println("StepPrepare complete")
 
-func (w *Worker) collectWorkerInfo() {
-	w.workerStats.activeVertices = w.NumActiveVertices()
-	w.workerStats.numVertices = w.NumVertices()
-	w.workerStats.sentMsgs = w.NumSentMsgs()
-}
-
-func (w *Worker) execStep() os.Error {
-	// XXX this is out of order?
-	w.logger.Printf("Executing step %d", w.superstep)
-
-	// persist if checkpoint
-	if w.checkpoint && w.persister != nil {
-		if err := w.persister.Write(); err != nil {
-			return err
-		}
-	}
-
-	w.compute()
-	w.logger.Printf("Done computation, flushing outq")
-	// this blocks and will prevent us from notifying until all of our msgs are
-	// sent
-	w.outq.flush()
-	w.outq.wait.Wait()
-
-	w.collectWorkerInfo()
-
-	w.logger.Printf("Step %d complete, notifying master", w.superstep)
-
-	if err := w.notifyMaster("Master.NotifyStepComplete"); err != nil {
-		return err
-	}
-	return nil
+	w.evCh <- &PhaseSummary{PhaseId: phaseSTEPPREPARE}
 }
 
 func (w *Worker) compute() os.Error {
 	var wg sync.WaitGroup
 	// XXX limit max routines?
-	for _, p := range w.parts {
+	for _, p := range w.partitions {
 		pp := p
 		wg.Add(1)
 		go func() {
@@ -432,29 +362,70 @@ func (w *Worker) compute() os.Error {
 	return nil
 }
 
-func (w *Worker) WriteResults(m *BasicMasterMsg, resp *Resp) os.Error {
-	*resp = OK
-	go w.writeResults()
-	return nil
-}
+func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
+	summary := &PhaseSummary{PhaseId: phaseSUPERSTEP}
 
-func (w *Worker) writeResults() {
-	w.logger.Printf("Writing results")
-	if w.resultWriter != nil {
-		w.resultWriter.Init(w)
-		w.resultWriter.WriteResults()
+	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
+		summary.addError(os.NewError("Superstep did not increment by one"))
+		w.evCh <- summary
+		return
 	}
-	w.notifyMaster("Master.NotifyWriteResultsComplete")
+
+	if checkpoint {
+		if w.persister != nil {
+			if err := w.persister.Write(); err != nil {
+				summary.addError(err)
+				w.evCh <- summary
+				return
+			}
+		} else {
+			log.Println("No Persister defined for this worker")
+		}
+	}
+
+	// set the step info fields for superstep and checkpoint
+	w.stepInfo.superstep, w.stepInfo.checkpoint = superstep, checkpoint
+
+	w.compute()
+
+	// Flush the outq and wait for any messages that haven't been sent yet
+	w.outq.flush()
+	w.outq.wait.Wait()
+
+	summary.JobId = w.jobId
+	summary.ActiveVerts = w.NumActiveVertices()
+	summary.NumVerts = w.NumVertices()
+	summary.SentMsgs = w.NumSentMsgs()
+
+	log.Println("Superstep complete")
+
+	w.evCh <- summary
 }
 
-func (w *Worker) endJob(m *BasicMasterMsg, resp *Resp) os.Error {
-	defer func() {
-		w.mcl.Close()
-		for wid := range w.wmap {
-			cl, _ := w.cl(wid)
-			cl.Close()
-		}
-	}()
-	*resp = OK
-	return nil
+// Expose for RPC interface
+func (w *Worker) QueueMessages(msgs []Msg) {
+	go w.inq.addMsgs(msgs)
+}
+
+// Expose for RPC interface
+func (w *Worker) QueueVertices(verts []Vertex) {
+	go w.vinq.addVertices(verts)
+}
+
+func (w *Worker) executeWriteResults() {
+	summary := &PhaseSummary{PhaseId: phaseWRITE}
+	if w.resultWriter == nil {
+		log.Println("No ResultWriter defined for this worker")
+		w.evCh <- summary
+		return
+	}
+
+	w.resultWriter.Init(w)
+	if err := w.resultWriter.WriteResults(); err != nil {
+		summary.addError(err)
+	}
+
+	log.Println("WriteResults complete")
+
+	w.evCh <- summary
 }

@@ -1,5 +1,9 @@
 package waffle
 
+import (
+	"os"
+)
+
 // messages passed from vert to vert
 type Msg interface {
 	DestVertId() string
@@ -44,47 +48,52 @@ type AddEdgeMsg struct {
 	E Edge
 }
 
-// messages between workers and master (control rpc, not waffle messages)
-type CoordMsg interface {
-
-}
-
-type BasicWorkerMsg struct {
-	Wid string
-}
-
 type BasicMasterMsg struct {
 	JobId string
 }
 
-type RegisterMsg struct {
+type RegisterInfo struct {
 	Addr string
 	Port string
 }
 
 type RegisterResp struct {
-	Wid   string
-	JobId string
+	WorkerId string
+	JobId    string
 }
 
 type TopologyInfo struct {
-	JobId string
-	Wmap  map[string]string
-	Pmap  map[uint64]string
+	JobId        string
+	WorkerMap    map[string]string
+	PartitionMap map[uint64]string
 }
 
-type WorkerInfoMsg struct {
-	Wid         string
+type PhaseExec struct {
+	JobId       string
+	PhaseId     int
+	Superstep   uint64
+	Checkpoint  bool
+	NumVerts    uint64
+	ActiveVerts uint64
+}
+
+type PhaseSummary struct {
+	JobId    string
+	WorkerId string
+	PhaseId  int
+	// Errors []os.Error
 	ActiveVerts uint64
 	NumVerts    uint64
+	SentVerts   uint64
 	SentMsgs    uint64
-	Success     bool
+	PhaseTime   int64
 }
 
-type SuperstepMsg struct {
-	JobId      string
-	Superstep  uint64
-	Checkpoint bool
-	// Stats we need to distribute regarding the state of the graph
-	NumVerts uint64
+func (s *PhaseSummary) addError(err os.Error) {
+	/*
+		if s.Errors == nil {
+			s.Errors = make([]os.Error, 0)
+		}
+		s.Errors = append(s.Errors, err)
+	*/
 }
