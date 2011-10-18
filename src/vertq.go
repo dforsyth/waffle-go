@@ -68,7 +68,7 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 	q.verts[wid] = append(q.verts[wid], v)
 	if int64(len(q.verts[wid])) > q.thresh {
 		verts := q.verts[wid]
-		q.verts[wid] = nil, false
+		delete(q.verts, wid)
 		q.sendVerticesAsync(wid, verts)
 	}
 	q.s <- 1
@@ -80,7 +80,7 @@ func (q *OutVertexQ) flush() os.Error {
 		if e := q.sendVertices(wid, verts); e != nil {
 			panic(e)
 		}
-		q.verts[wid] = nil, false
+		delete(q.verts, wid)
 	}
 	q.s <- 1
 	return nil

@@ -121,7 +121,7 @@ func (q *OutMsgQ) addMsg(msg Msg) {
 	q.out[wid] = append(q.out[wid], msg)
 	if int64(len(q.out[wid])) >= q.thresh {
 		msgs := q.out[wid]
-		q.out[wid] = nil, false
+		delete(q.out, wid)
 		q.sendMsgsAsync(wid, msgs)
 	}
 }
@@ -135,6 +135,6 @@ func (q *OutMsgQ) flush() {
 		}
 	}
 	for wid := range q.out {
-		q.out[wid] = nil, false
+		delete(q.out, wid)
 	}
 }
