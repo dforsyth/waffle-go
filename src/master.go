@@ -158,8 +158,6 @@ func (m *Master) SetPartitionsPerWorker(partsPerWorker uint64) {
 func (m *Master) prepare() os.Error {
 	// XXX Registration
 	m.registerWorkers()
-
-	m.startTime = time.Seconds()
 	m.determinePartitions()
 
 	// Loading is a two step process: first we do the initial load by worker,
@@ -168,6 +166,7 @@ func (m *Master) prepare() os.Error {
 	m.dataLoadPhase1()
 	m.resetJobInfo()
 	m.dataLoadPhase2()
+	m.startTime = time.Seconds()
 
 	return nil
 }
@@ -434,5 +433,5 @@ func (m *Master) Run() {
 	m.finish()
 	log.Printf("Done")
 
-	log.Printf("Job run time (post registration) was %d seconds", m.endTime-m.startTime)
+	log.Printf("Job run time (post load) was %d seconds", m.endTime-m.startTime)
 }

@@ -47,16 +47,12 @@ type Worker struct {
 	mport string
 
 	state int
-	// Current and previous state
-	// checkpoint bool
-	// superstep  uint64
 
 	lastCheckpoint bool
 	lastSuperstep  uint64
 
-	numVertices uint64
-	phaseStats  phaseStat
-	jobStats    jobStat
+	phaseStats phaseStat
+	jobStats   jobStat
 
 	// Msg queues
 	msgs  *InMsgQ
@@ -75,11 +71,10 @@ type Worker struct {
 
 	stepInfo, lastStepInfo *stepInfo
 
-	// phases    map[int]Phase
 	rpcClient WorkerRpcClient
 	rpcServ   WorkerRpcServer
 
-	evCh chan *PhaseSummary
+	endCh chan *PhaseSummary
 }
 
 // Worker state
@@ -99,7 +94,7 @@ func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
 		state:      NONE,
 		partitions: make(map[uint64]*Partition),
 	}
-	w.InitNode(addr, port)
+
 	w.msgs = newInMsgQ()
 	w.inq = newInMsgQ()
 	w.outq = newOutMsgQ(w, msgThreshold)
@@ -107,6 +102,8 @@ func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
 	w.voutq = newOutVertexQ(w, vertThreshold)
 
 	w.stepInfo, w.lastStepInfo = &stepInfo{}, &stepInfo{}
+
+	w.InitNode(addr, port)
 
 	return w
 }
@@ -155,26 +152,6 @@ func (w *Worker) Partitions() map[uint64]*Partition {
 	return w.partitions
 }
 
-func (w *Worker) NumActiveVertices() uint64 {
-	var sum uint64 = 0
-	for _, p := range w.partitions {
-		sum += p.numActiveVertices()
-	}
-	return sum
-}
-
-func (w *Worker) NumVertices() uint64 {
-	var sum uint64 = 0
-	for _, p := range w.partitions {
-		sum += p.numVertices()
-	}
-	return sum
-}
-
-func (w *Worker) NumSentMsgs() uint64 {
-	return w.outq.numSent()
-}
-
 // Expose for RPC interface
 func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
 	// Reset phase stats
@@ -203,31 +180,44 @@ func (w *Worker) Run() {
 	w.rpcClient.Init()
 	w.rpcServ.Start(w)
 
-	// w.init()
-	if err := w.discoverMaster(); err != nil {
-		panic(err)
+	for {
+		if err := w.discoverMaster(); err != nil {
+			panic(err)
+		}
+		if err := w.registerForJob(); err != nil {
+			panic(err)
+		}
+		if w.jobId != "" {
+			break
+		}
+		log.Printf("Job registration unsuccessful.  Trying again.")
 	}
 
-	if err := w.registerForJob(); err != nil {
-		panic(err)
-	}
-	// XXX Just die if registration didn't go through
-	if w.jobId == "" {
-		log.Printf("No job, bye bye")
-		return
-	}
 	w.phaseSummaryLoop()
 }
 
+// This loop waits for phases to end then notifies master
 func (w *Worker) phaseSummaryLoop() {
-	w.evCh = make(chan *PhaseSummary)
-	for ev := range w.evCh {
+	w.endCh = make(chan *PhaseSummary)
+	for ps := range w.endCh {
 		// end the phase and fill in some of the summary
 		w.phaseStats.end()
 
-		ev.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
-		ev.WorkerId = w.workerId
-		w.rpcClient.PhaseResult(net.JoinHostPort(w.mhost, w.mport), ev)
+		ps.JobId = w.jobId
+		ps.WorkerId = w.workerId
+		ps.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
+		log.Printf("worker %s ran phase in %d seconds", ps.WorkerId, ps.PhaseTime)
+		ps.ActiveVerts = 0
+		ps.NumVerts = 0
+		for _, p := range w.partitions {
+			ps.ActiveVerts += p.numActiveVertices()
+			ps.NumVerts += p.numVertices()
+		}
+		log.Printf("worker %s has %d active and %d total vertices", ps.WorkerId, ps.ActiveVerts, ps.NumVerts)
+		ps.SentMsgs = w.outq.numSent()
+		log.Printf("worker %s sent %d messages", ps.WorkerId, ps.SentMsgs)
+
+		w.rpcClient.PhaseResult(net.JoinHostPort(w.mhost, w.mport), ps)
 	}
 }
 
@@ -265,55 +255,32 @@ func (w *Worker) SetJobTopology(workerMap map[string]string, partitionMap map[ui
 }
 
 func (w *Worker) executeLoadDirect() {
-	var summary PhaseSummary
+	summary := &PhaseSummary{PhaseId: phaseLOAD1}
 
-	if w.loader == nil {
-		summary.addError(os.NewError("Worker has no loader"))
-		w.evCh <- &summary
-		return
+	if w.loader != nil {
+		if loaded, err := w.loader.Load(w); err == nil {
+			log.Printf("Loaded %d vertices", loaded)
+			w.voutq.flush()
+			w.voutq.wait.Wait()
+		} else {
+			summary.addError(err)
+		}
+	} else {
+		log.Printf("worker %d has no loader", w.workerId)
 	}
 
-	loaded, err := w.loader.Load(w)
-	if err != nil {
-		summary.addError(err)
-		w.evCh <- &summary
-		return
-	}
-
-	w.voutq.flush()
-	w.voutq.wait.Wait()
-
-	summary.NumVerts = loaded
-	summary.PhaseId = phaseLOAD1
-
-	log.Println("LoadDirect complete")
-
-	w.evCh <- &summary
+	w.endCh <- summary
 }
 
 func (w *Worker) executeLoadQueue() {
-	var loaded uint64 = 0
 	for _, v := range w.vinq.verts {
-		w.addToPartition(v)
-		loaded++
+		w.AddVertex(v)
 	}
 
-	var summary PhaseSummary
-
-	summary.PhaseId = phaseLOAD2
-	summary.NumVerts = loaded
-	summary.ActiveVerts = w.NumActiveVertices()
-
-	log.Println("LoadQueue complete")
-
-	w.evCh <- &summary
+	w.endCh <- &PhaseSummary{PhaseId: phaseLOAD2}
 }
 
 func (w *Worker) AddVertex(v Vertex) {
-	w.addToPartition(v)
-}
-
-func (w *Worker) addToPartition(v Vertex) os.Error {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
@@ -323,10 +290,9 @@ func (w *Worker) addToPartition(v Vertex) os.Error {
 	} else {
 		w.voutq.addVertex(v)
 	}
-	return nil
 }
 
-// Expose for RPC iterface
+// Prepase for the next superstep (message queue swaps and resets)
 func (w *Worker) executeStepPrepare() {
 	w.msgs, w.inq = w.inq, w.msgs
 	w.inq.clear()
@@ -335,10 +301,34 @@ func (w *Worker) executeStepPrepare() {
 
 	log.Println("StepPrepare complete")
 
-	w.evCh <- &PhaseSummary{PhaseId: phaseSTEPPREPARE}
+	w.endCh <- &PhaseSummary{PhaseId: phaseSTEPPREPARE}
 }
 
-func (w *Worker) compute() os.Error {
+// Execute a single superstep
+func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
+	summary := &PhaseSummary{PhaseId: phaseSUPERSTEP}
+
+	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
+		summary.addError(os.NewError("Superstep did not increment by one"))
+		w.endCh <- summary
+		return
+	}
+
+	if checkpoint {
+		if w.persister != nil {
+			if err := w.persister.Write(w); err != nil {
+				summary.addError(err)
+				w.endCh <- summary
+				return
+			}
+		} else {
+			log.Println("No Persister defined for this worker")
+		}
+	}
+
+	// set the step info fields for superstep and checkpoint
+	w.stepInfo.superstep, w.stepInfo.checkpoint = superstep, checkpoint
+
 	var wg sync.WaitGroup
 	// XXX limit max routines?
 	for _, p := range w.partitions {
@@ -350,47 +340,14 @@ func (w *Worker) compute() os.Error {
 		}()
 	}
 	wg.Wait()
-	return nil
-}
-
-func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
-	summary := &PhaseSummary{PhaseId: phaseSUPERSTEP}
-
-	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
-		summary.addError(os.NewError("Superstep did not increment by one"))
-		w.evCh <- summary
-		return
-	}
-
-	if checkpoint {
-		if w.persister != nil {
-			if err := w.persister.Write(w); err != nil {
-				summary.addError(err)
-				w.evCh <- summary
-				return
-			}
-		} else {
-			log.Println("No Persister defined for this worker")
-		}
-	}
-
-	// set the step info fields for superstep and checkpoint
-	w.stepInfo.superstep, w.stepInfo.checkpoint = superstep, checkpoint
-
-	w.compute()
 
 	// Flush the outq and wait for any messages that haven't been sent yet
 	w.outq.flush()
 	w.outq.wait.Wait()
 
-	summary.JobId = w.jobId
-	summary.ActiveVerts = w.NumActiveVertices()
-	summary.NumVerts = w.NumVertices()
-	summary.SentMsgs = w.NumSentMsgs()
-
 	log.Println("Superstep complete")
 
-	w.evCh <- summary
+	w.endCh <- summary
 }
 
 // Expose for RPC interface
@@ -405,17 +362,14 @@ func (w *Worker) QueueVertices(verts []Vertex) {
 
 func (w *Worker) executeWriteResults() {
 	summary := &PhaseSummary{PhaseId: phaseWRITE}
-	if w.resultWriter == nil {
-		log.Println("No ResultWriter defined for this worker")
-		w.evCh <- summary
-		return
+	if w.resultWriter != nil {
+		if err := w.resultWriter.WriteResults(w); err != nil {
+			summary.addError(err)
+		}
+		log.Println("WriteResults complete")
+	} else {
+		log.Println("No ResultWriter set for this worker")
 	}
 
-	if err := w.resultWriter.WriteResults(w); err != nil {
-		summary.addError(err)
-	}
-
-	log.Println("WriteResults complete")
-
-	w.evCh <- summary
+	w.endCh <- summary
 }
