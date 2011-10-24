@@ -132,7 +132,6 @@ func (m *Master) resetJobInfo() {
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
 	m.mPhaseInfo.Lock()
 	m.activeVerts += ps.ActiveVerts
-	log.Printf("activeVerts is %d", m.activeVerts)
 	m.numVertices += ps.NumVerts
 	m.sentMsgs += ps.SentMsgs
 	m.mPhaseInfo.Unlock()
@@ -291,6 +290,7 @@ func (m *Master) dataLoadPhase1() os.Error {
 
 	exec := &PhaseExec{PhaseId: phaseLOAD1}
 	exec.JobId = m.jobId
+	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
 
@@ -305,6 +305,7 @@ func (m *Master) dataLoadPhase2() os.Error {
 
 	exec := &PhaseExec{PhaseId: phaseLOAD2}
 	exec.JobId = m.jobId
+	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
 
@@ -336,6 +337,7 @@ func (m *Master) prepareWorkers() os.Error {
 	}
 	exec.JobId = m.jobId
 
+	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
 
@@ -358,19 +360,19 @@ func (m *Master) execStep() os.Error {
 
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
-
 	m.barrier(m.barrierCh)
 
 	return nil
 }
 
 // instruct workers to write results
-func (m *Master) completeJob() os.Error {
+func (m *Master) outputResults() os.Error {
 	log.Printf("Instructing workers to write results")
 
 	m.currPhase = phaseWRITE
 
 	exec := &PhaseExec{PhaseId: phaseWRITE}
+	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
 
@@ -396,16 +398,7 @@ func (m *Master) endWorkers() os.Error {
 	return nil
 }
 
-// job finished
-func (m *Master) finish() os.Error {
-	m.completeJob()
-	// m.releaseWorkers()
-	m.endTime = time.Seconds()
-	return nil
-}
-
 func (m *Master) Run() {
-
 	m.startRPC()
 
 	m.registerWorkers()
@@ -415,13 +408,15 @@ func (m *Master) Run() {
 	// sending verts off to the correct worker if need be.  Then, we do a
 	// second load step, where anything that was sent around is loaded.
 	m.dataLoadPhase1()
-	m.resetJobInfo()
 	m.dataLoadPhase2()
 	m.startTime = time.Seconds()
 
+	// computation phase
 	m.compute()
-	m.finish()
-	log.Printf("Done")
+
+	// output results and shutdow workers
+	m.outputResults()
+	m.endTime = time.Seconds()
 
 	log.Printf("Job run time (post load) was %d seconds", m.endTime-m.startTime)
 }

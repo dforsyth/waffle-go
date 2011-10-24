@@ -331,6 +331,7 @@ func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
 
 	var wg sync.WaitGroup
 	// XXX limit max routines?
+	// XXX use real threads?
 	for _, p := range w.partitions {
 		pp := p
 		wg.Add(1)
