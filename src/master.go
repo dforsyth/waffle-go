@@ -317,6 +317,8 @@ func (m *Master) dataLoadPhase1() os.Error {
 func (m *Master) dataLoadPhase2() os.Error {
 	log.Printf("Instructing workers to do second phase of data load")
 
+	m.currPhase = phaseLOAD2
+
 	exec := &PhaseExec{PhaseId: phaseLOAD2}
 	exec.JobId = m.jobId
 	m.sendExecToAllWorkers(exec)
@@ -343,6 +345,8 @@ func (m *Master) compute() os.Error {
 
 // prepare workers for the next superstep
 func (m *Master) prepareWorkers() os.Error {
+	m.currPhase = phaseSTEPPREPARE
+
 	exec := &PhaseExec{
 		PhaseId: phaseSTEPPREPARE,
 	}
@@ -357,6 +361,8 @@ func (m *Master) prepareWorkers() os.Error {
 // superstep
 func (m *Master) execStep() os.Error {
 	log.Printf("Starting step %d -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
+
+	m.currPhase = phaseSUPERSTEP
 
 	exec := &PhaseExec{
 		PhaseId:    phaseSUPERSTEP,
@@ -377,6 +383,9 @@ func (m *Master) execStep() os.Error {
 // instruct workers to write results
 func (m *Master) completeJob() os.Error {
 	log.Printf("Instructing workers to write results")
+
+	m.currPhase = phaseWRITE
+
 	exec := &PhaseExec{PhaseId: phaseWRITE}
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
