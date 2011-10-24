@@ -28,7 +28,6 @@ type masterConfig struct {
 	partsPerWorker    uint64
 	heartbeatInterval int64
 	heartbeatTimeout  int64
-	jobId             string
 }
 
 type Master struct {
@@ -36,12 +35,10 @@ type Master struct {
 
 	config masterConfig
 
-	phaseId   int
+	jobId     string
+	currPhase int
 	regch     chan byte
-	loadch    chan *PhaseSummary
-	workch    chan *PhaseSummary
-	writech   chan *PhaseSummary
-	preparech chan *PhaseSummary
+	barrierCh chan *PhaseSummary
 	superstep uint64
 	startTime int64
 	endTime   int64
@@ -52,7 +49,7 @@ type Master struct {
 	checkpointFn func(uint64) bool
 
 	// job stats
-	as          chan byte
+	mPhaseInfo  sync.RWMutex
 	activeVerts uint64
 	numVertices uint64
 	sentMsgs    uint64
@@ -61,12 +58,26 @@ type Master struct {
 	rpcClient MasterRpcClient
 }
 
+func (m *Master) EnterBarrier(summary *PhaseSummary) os.Error {
+	go func() {
+		m.barrierCh <- summary
+	}()
+	return nil
+}
+
 // For now, this is the barrier that the workers "enter" for sync
 func (m *Master) barrier(ch chan *PhaseSummary) {
 	bmap := make(map[string]interface{})
-	for e := range ch {
-		bmap[e.WorkerId] = nil
-		log.Printf("Phase took %d seconds on worker '%s'", e.PhaseTime, e.WorkerId)
+	for ps := range ch {
+		if m.jobId != ps.JobId {
+			log.Fatalf("JobId mismatch in enterBarrier")
+		}
+		if m.currPhase != ps.PhaseId {
+			log.Fatalf("Phase mismatch in enterBarrier from worker %s", ps.WorkerId)
+		}
+
+		m.collectSummaryInfo(ps)
+		bmap[ps.WorkerId] = nil
 		if len(bmap) == len(m.workerMap) {
 			return
 		}
@@ -76,15 +87,11 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, registerWait, heartbeatInterval, heartbeatTimeout int64) *Master {
 	m := &Master{
 		regch:     make(chan byte, 1),
-		as:        make(chan byte, 1),
-		loadch:    make(chan *PhaseSummary),
-		workch:    make(chan *PhaseSummary),
-		writech:   make(chan *PhaseSummary),
-		preparech: make(chan *PhaseSummary),
+		barrierCh: make(chan *PhaseSummary),
 		wInfo:     make(map[string]*workerInfo),
 	}
 
-	m.config.jobId = jobId
+	m.jobId = jobId
 	m.config.partsPerWorker = partsPerWorker
 	m.config.registerWait = registerWait
 	m.config.heartbeatInterval = heartbeatInterval
@@ -93,7 +100,6 @@ func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, regi
 
 	m.InitNode(addr, port)
 	m.regch <- 1
-	m.as <- 1
 	m.widFn = func(addr, port string) string {
 		return net.JoinHostPort(addr, port)
 	}
@@ -113,25 +119,22 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 
 // Zero out the stats from the last step
 func (m *Master) resetJobInfo() {
-	<-m.as
+	// this doesnt even really need the locking -- it shouldnt happen while a barrier is accepting workers
+	m.mPhaseInfo.Lock()
 	m.activeVerts = 0
 	m.sentMsgs = 0
 	m.numVertices = 0
-	m.as <- 1
+	m.mPhaseInfo.Unlock()
 	log.Println("reset complete")
 }
 
 // Update the stats from the current step
-func (m *Master) addActiveInfo(activeVerts, numVertices, sentMsgs uint64) {
-	<-m.as
-	m.activeVerts += activeVerts
-	m.sentMsgs += sentMsgs
-	m.numVertices += numVertices
-	m.as <- 1
-}
-
-func (m *Master) collectSummaryInfo(summary *PhaseSummary) {
-	m.addActiveInfo(summary.ActiveVerts, summary.NumVerts, summary.SentMsgs)
+func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
+	m.mPhaseInfo.Lock()
+	m.activeVerts += ps.ActiveVerts
+	m.numVertices += ps.NumVerts
+	m.sentMsgs += ps.SentMsgs
+	m.mPhaseInfo.Unlock()
 }
 
 func (m *Master) SetRpcClient(c MasterRpcClient) {
@@ -173,7 +176,7 @@ func (m *Master) prepare() os.Error {
 
 func (m *Master) ekg(id string) {
 	/*
-		msg := &BasicMasterMsg{JobId: m.config.jobId}
+		msg := &BasicMasterMsg{JobId: m.jobId}
 		cl, e := m.cl(id)
 		if e != nil {
 			panic(e.String())
@@ -216,7 +219,7 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, os.Error) {
 	m.workerMap[workerId] = net.JoinHostPort(addr, port)
 	m.wInfo[workerId] = newWorkerInfo()
 
-	jobId := m.config.jobId
+	jobId := m.jobId
 
 	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, jobId)
 	go m.ekg(workerId)
@@ -271,7 +274,7 @@ func (m *Master) determinePartitions() {
 		wg.Add(1)
 		go func() {
 			if err := m.rpcClient.PushTopology(addr,
-				&TopologyInfo{JobId: m.config.jobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}); err != nil {
+				&TopologyInfo{JobId: m.jobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}); err != nil {
 				panic(err)
 			}
 			wg.Done()
@@ -280,26 +283,6 @@ func (m *Master) determinePartitions() {
 	wg.Wait()
 
 	log.Printf("Done distributing worker and partition info")
-}
-
-func (m *Master) EnterBarrier(summary *PhaseSummary) os.Error {
-	go m.enterBarrier(summary)
-	return nil
-}
-
-func (m *Master) enterBarrier(summary *PhaseSummary) {
-	m.collectSummaryInfo(summary)
-	switch summary.PhaseId {
-	case phaseLOAD1, phaseLOAD2:
-		m.loadch <- summary
-	case phaseSTEPPREPARE:
-		m.preparech <- summary
-	case phaseSUPERSTEP:
-		m.workch <- summary
-	case phaseWRITE:
-		m.writech <- summary
-	default:
-	}
 }
 
 func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
@@ -320,10 +303,12 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 func (m *Master) dataLoadPhase1() os.Error {
 	log.Printf("Instructing workers to do first phase of data load")
 
+	m.currPhase = phaseLOAD1
+
 	exec := &PhaseExec{PhaseId: phaseLOAD1}
-	exec.JobId = m.config.jobId
+	exec.JobId = m.jobId
 	m.sendExecToAllWorkers(exec)
-	m.barrier(m.loadch)
+	m.barrier(m.barrierCh)
 
 	log.Printf("Done first phase of data load")
 	return nil
@@ -333,9 +318,9 @@ func (m *Master) dataLoadPhase2() os.Error {
 	log.Printf("Instructing workers to do second phase of data load")
 
 	exec := &PhaseExec{PhaseId: phaseLOAD2}
-	exec.JobId = m.config.jobId
+	exec.JobId = m.jobId
 	m.sendExecToAllWorkers(exec)
-	m.barrier(m.loadch)
+	m.barrier(m.barrierCh)
 
 	log.Printf("Done second phase of data load")
 	return nil
@@ -361,10 +346,10 @@ func (m *Master) prepareWorkers() os.Error {
 	exec := &PhaseExec{
 		PhaseId: phaseSTEPPREPARE,
 	}
-	exec.JobId = m.config.jobId
+	exec.JobId = m.jobId
 
 	m.sendExecToAllWorkers(exec)
-	m.barrier(m.preparech)
+	m.barrier(m.barrierCh)
 
 	return nil
 }
@@ -379,12 +364,12 @@ func (m *Master) execStep() os.Error {
 		NumVerts:   m.numVertices,
 		Checkpoint: m.checkpointFn(m.superstep),
 	}
-	exec.JobId = m.config.jobId
+	exec.JobId = m.jobId
 
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 
-	m.barrier(m.workch)
+	m.barrier(m.barrierCh)
 
 	return nil
 }
@@ -394,7 +379,7 @@ func (m *Master) completeJob() os.Error {
 	log.Printf("Instructing workers to write results")
 	exec := &PhaseExec{PhaseId: phaseWRITE}
 	m.sendExecToAllWorkers(exec)
-	m.barrier(m.writech)
+	m.barrier(m.barrierCh)
 
 	log.Printf("Workers have written results")
 	return nil
@@ -403,7 +388,7 @@ func (m *Master) completeJob() os.Error {
 // shutdown workers
 func (m *Master) endWorkers() os.Error {
 	/*
-		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.config.jobId}, nil); e != nil {
+		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.jobId}, nil); e != nil {
 			panic(e)
 		}
 		// don't wait for a notify on this call	

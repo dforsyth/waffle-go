@@ -10,22 +10,20 @@ type MsgQ interface {
 }
 
 type InMsgQ struct {
-	s  chan byte
+	m  sync.Mutex
 	in map[string][]Msg
 }
 
 func newInMsgQ() *InMsgQ {
 	q := &InMsgQ{
-		s:  make(chan byte, 1),
 		in: make(map[string][]Msg),
 	}
-	q.s <- 1
 	return q
 }
 
 func (q *InMsgQ) addMsg(msg Msg) {
-	<-q.s
-	defer func() { q.s <- 1 }()
+	q.m.Lock()
+	defer q.m.Unlock()
 	if _, ok := q.in[msg.DestVertId()]; !ok {
 		q.in[msg.DestVertId()] = make([]Msg, 0)
 	}
@@ -33,8 +31,8 @@ func (q *InMsgQ) addMsg(msg Msg) {
 }
 
 func (q *InMsgQ) addMsgs(msgs []Msg) {
-	<-q.s
-	defer func() { q.s <- 1 }()
+	q.m.Lock()
+	defer q.m.Unlock()
 	for _, msg := range msgs {
 		if _, ok := q.in[msg.DestVertId()]; !ok {
 			q.in[msg.DestVertId()] = make([]Msg, 0)
@@ -52,7 +50,7 @@ func (q *InMsgQ) clear() {
 }
 
 type OutMsgQ struct {
-	s      chan byte
+	m      sync.Mutex
 	out    map[string][]Msg
 	worker *Worker
 	thresh int64
@@ -62,13 +60,11 @@ type OutMsgQ struct {
 
 func newOutMsgQ(w *Worker, thresh int64) *OutMsgQ {
 	q := &OutMsgQ{
-		s:      make(chan byte, 1),
 		out:    make(map[string][]Msg),
 		worker: w,
 		thresh: thresh,
 		sent:   0,
 	}
-	q.s <- 1
 	return q
 }
 
@@ -111,8 +107,8 @@ func (q *OutMsgQ) sendMsgsAsync(id string, msgs []Msg) chan interface{} {
 }
 
 func (q *OutMsgQ) addMsg(msg Msg) {
-	<-q.s
-	defer func() { q.s <- 1 }()
+	q.m.Lock()
+	defer q.m.Unlock()
 	pid := q.worker.getPartitionOf(msg.DestVertId())
 	wid := q.worker.partitionMap[pid]
 	if _, ok := q.out[wid]; !ok {
@@ -127,8 +123,8 @@ func (q *OutMsgQ) addMsg(msg Msg) {
 }
 
 func (q *OutMsgQ) flush() {
-	<-q.s
-	defer func() { q.s <- 1 }()
+	q.m.Lock()
+	defer q.m.Unlock()
 	for wid, msgs := range q.out {
 		if e := q.sendMsgs(wid, msgs); e != nil {
 			panic(e.String())

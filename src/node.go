@@ -15,7 +15,6 @@ type node struct {
 	partitionMap map[uint64]string // partition map (partition id -> worker id)
 	workerMap    map[string]string // worker map (worker id -> worker address)
 	partFn       func(string) uint64
-	s            chan interface{}
 }
 
 func (n *node) Host() string {
@@ -46,8 +45,6 @@ func (n *node) InitNode(addr, port string) {
 	n.addr = addr
 	n.port = port
 	n.partFn = dumbHashFn
-	n.s = make(chan interface{}, 1)
-	n.s <- 1
 }
 
 func (n *node) SetVertexPartitionFn(fn func(string) uint64) {
