@@ -283,7 +283,7 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 // data source and enter a barrier.  Once the barrier is full, the worker will be told to load vertices
 // that were sent to it during the previous phase (because they did not belong on the worker that loaded
 // them).
-func (m *Master) dataLoadPhase1() os.Error {
+func (m *Master) loadVertices() os.Error {
 	log.Printf("Instructing workers to do first phase of data load")
 
 	m.currPhase = phaseLOAD1
@@ -298,7 +298,7 @@ func (m *Master) dataLoadPhase1() os.Error {
 	return nil
 }
 
-func (m *Master) dataLoadPhase2() os.Error {
+func (m *Master) loadVerticesQueue() os.Error {
 	log.Printf("Instructing workers to do second phase of data load")
 
 	m.currPhase = phaseLOAD2
@@ -407,8 +407,8 @@ func (m *Master) Run() {
 	// Loading is a two step process: first we do the initial load by worker,
 	// sending verts off to the correct worker if need be.  Then, we do a
 	// second load step, where anything that was sent around is loaded.
-	m.dataLoadPhase1()
-	m.dataLoadPhase2()
+	m.loadVertices()
+	m.loadVerticesQueue()
 	m.startTime = time.Seconds()
 
 	// computation phase

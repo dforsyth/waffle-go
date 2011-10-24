@@ -161,15 +161,15 @@ func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
 	// Determine the phaseId and dispatch
 	switch exec.PhaseId {
 	case phaseLOAD1:
-		go w.executeLoadDirect()
+		go w.loadVertices()
 	case phaseLOAD2:
-		go w.executeLoadQueue()
+		go w.loadVerticesQueue()
 	case phaseSTEPPREPARE:
-		go w.executeStepPrepare()
+		go w.prepareForStep()
 	case phaseSUPERSTEP:
-		go w.executeSuperstep(exec.Superstep, exec.Checkpoint)
+		go w.step(exec)
 	case phaseWRITE:
-		go w.executeWriteResults()
+		go w.outputResults()
 	default:
 		panic(os.NewError("No phase identified"))
 	}
@@ -254,10 +254,12 @@ func (w *Worker) SetJobTopology(workerMap map[string]string, partitionMap map[ui
 	}
 }
 
-func (w *Worker) executeLoadDirect() {
+func (w *Worker) loadVertices() {
 	summary := &PhaseSummary{PhaseId: phaseLOAD1}
 
 	if w.loader != nil {
+		// At some point, should add code to load from the queue while
+		// direct loading is going on.
 		if loaded, err := w.loader.Load(w); err == nil {
 			log.Printf("Loaded %d vertices", loaded)
 			w.voutq.flush()
@@ -272,7 +274,7 @@ func (w *Worker) executeLoadDirect() {
 	w.endCh <- summary
 }
 
-func (w *Worker) executeLoadQueue() {
+func (w *Worker) loadVerticesQueue() {
 	for _, v := range w.vinq.verts {
 		w.AddVertex(v)
 	}
@@ -293,7 +295,7 @@ func (w *Worker) AddVertex(v Vertex) {
 }
 
 // Prepase for the next superstep (message queue swaps and resets)
-func (w *Worker) executeStepPrepare() {
+func (w *Worker) prepareForStep() {
 	w.msgs, w.inq = w.inq, w.msgs
 	w.inq.clear()
 	w.outq.reset()
@@ -305,9 +307,10 @@ func (w *Worker) executeStepPrepare() {
 }
 
 // Execute a single superstep
-func (w *Worker) executeSuperstep(superstep uint64, checkpoint bool) {
+func (w *Worker) step(pe *PhaseExec) {
 	summary := &PhaseSummary{PhaseId: phaseSUPERSTEP}
 
+	superstep, checkpoint := pe.Superstep, pe.Checkpoint
 	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
 		summary.addError(os.NewError("Superstep did not increment by one"))
 		w.endCh <- summary
@@ -361,7 +364,7 @@ func (w *Worker) QueueVertices(verts []Vertex) {
 	go w.vinq.addVertices(verts)
 }
 
-func (w *Worker) executeWriteResults() {
+func (w *Worker) outputResults() {
 	summary := &PhaseSummary{PhaseId: phaseWRITE}
 	if w.resultWriter != nil {
 		if err := w.resultWriter.WriteResults(w); err != nil {
