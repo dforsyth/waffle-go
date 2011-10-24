@@ -132,6 +132,7 @@ func (m *Master) resetJobInfo() {
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
 	m.mPhaseInfo.Lock()
 	m.activeVerts += ps.ActiveVerts
+	log.Printf("activeVerts is %d", m.activeVerts)
 	m.numVertices += ps.NumVerts
 	m.sentMsgs += ps.SentMsgs
 	m.mPhaseInfo.Unlock()
@@ -146,7 +147,7 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 }
 
 // Init RPC
-func (m *Master) init() os.Error {
+func (m *Master) startRPC() os.Error {
 	m.rpcServ.Start(m)
 	m.rpcClient.Init()
 	return nil
@@ -155,23 +156,6 @@ func (m *Master) init() os.Error {
 // Set partitions per worker
 func (m *Master) SetPartitionsPerWorker(partsPerWorker uint64) {
 	m.config.partsPerWorker = partsPerWorker
-}
-
-// job setup
-func (m *Master) prepare() os.Error {
-	// XXX Registration
-	m.registerWorkers()
-	m.determinePartitions()
-
-	// Loading is a two step process: first we do the initial load by worker,
-	// sending verts off to the correct worker if need be.  Then, we do a
-	// second load step, where anything that was sent around is loaded.
-	m.dataLoadPhase1()
-	m.resetJobInfo()
-	m.dataLoadPhase2()
-	m.startTime = time.Seconds()
-
-	return nil
 }
 
 func (m *Master) ekg(id string) {
@@ -421,8 +405,20 @@ func (m *Master) finish() os.Error {
 }
 
 func (m *Master) Run() {
-	m.init()
-	m.prepare()
+
+	m.startRPC()
+
+	m.registerWorkers()
+	m.determinePartitions()
+
+	// Loading is a two step process: first we do the initial load by worker,
+	// sending verts off to the correct worker if need be.  Then, we do a
+	// second load step, where anything that was sent around is loaded.
+	m.dataLoadPhase1()
+	m.resetJobInfo()
+	m.dataLoadPhase2()
+	m.startTime = time.Seconds()
+
 	m.compute()
 	m.finish()
 	log.Printf("Done")
