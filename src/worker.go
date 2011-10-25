@@ -157,6 +157,18 @@ func (w *Worker) Partitions() map[uint64]*Partition {
 }
 
 // Expose for RPC interface
+func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint64]string) {
+	w.workerMap = workerMap
+	w.partitionMap = partitionMap
+
+	for pid, wid := range w.partitionMap {
+		if wid == w.workerId {
+			w.partitions[pid] = NewPartition(pid, w)
+		}
+	}
+}
+
+// Expose for RPC interface
 func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
 	// Reset phase stats
 	w.phaseStats.reset()
@@ -180,24 +192,26 @@ func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
 	return nil
 }
 
-func (w *Worker) Run() {
-	w.rpcClient.Init()
-	w.rpcServ.Start(w)
+// Expose for RPC interface
+func (w *Worker) QueueMessages(msgs []Msg) {
+	go w.inq.addMsgs(msgs)
+}
 
-	done := make(chan int)
-	for {
-		if err := w.discoverMaster(); err != nil {
-			panic(err)
-		}
-		if err := w.registerForJob(); err != nil {
-			panic(err)
-		}
-		if w.jobId != "" {
-			break
-		}
-		log.Printf("Job registration unsuccessful.  Trying again.")
+// Expose for RPC interface
+func (w *Worker) QueueVertices(verts []Vertex) {
+	go w.vinq.addVertices(verts)
+}
+
+func (w *Worker) addVertex(v Vertex) {
+	// determine the partition for v.  if it is not on this worker, add v to voutq so
+	// we can send it to the correct worker
+	pid := w.getPartitionOf(v.VertexId())
+	wid := w.partitionMap[pid]
+	if wid == w.workerId {
+		w.partitions[pid].addVertex(v)
+	} else {
+		w.voutq.addVertex(v)
 	}
-	<-done
 }
 
 func (w *Worker) sendSummary(phaseId int) {
@@ -225,7 +239,7 @@ func (w *Worker) discoverMaster() os.Error {
 }
 
 // Register step
-func (w *Worker) registerForJob() (err os.Error) {
+func (w *Worker) register() (err os.Error) {
 	log.Println("Trying to register")
 	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.mhost, w.mport), w.Host(), w.Port()); err != nil {
 		return
@@ -240,23 +254,12 @@ func (w *Worker) cleanup() os.Error {
 	return nil
 }
 
-// Expose for RPC interface
-func (w *Worker) SetJobTopology(workerMap map[string]string, partitionMap map[uint64]string) {
-	w.workerMap = workerMap
-	w.partitionMap = partitionMap
-
-	for pid, wid := range w.partitionMap {
-		if wid == w.workerId {
-			w.partitions[pid] = NewPartition(pid, w)
-		}
-	}
-}
-
 func (w *Worker) loadPhase1() {
 	if w.loader != nil {
 		// At some point, should add code to load from the queue while
 		// direct loading is going on.
-		if loaded, err := w.loader.Load(w); err == nil {
+		w.loader.Init(w)
+		if loaded, err := w.loader.Load(); err == nil {
 			log.Printf("Loaded %d vertices", loaded)
 			w.voutq.flush()
 			w.voutq.wait.Wait()
@@ -272,22 +275,10 @@ func (w *Worker) loadPhase1() {
 
 func (w *Worker) loadPhase2() {
 	for _, v := range w.vinq.verts {
-		w.AddVertex(v)
+		w.addVertex(v)
 	}
 
 	go w.sendSummary(phaseLOAD2)
-}
-
-func (w *Worker) AddVertex(v Vertex) {
-	// determine the partition for v.  if it is not on this worker, add v to voutq so
-	// we can send it to the correct worker
-	pid := w.getPartitionOf(v.VertexId())
-	wid := w.partitionMap[pid]
-	if wid == w.workerId {
-		w.partitions[pid].addVertex(v)
-	} else {
-		w.voutq.addVertex(v)
-	}
 }
 
 // Prepase for the next superstep (message queue swaps and resets)
@@ -349,16 +340,6 @@ func (w *Worker) step(pe *PhaseExec) {
 	go w.sendSummary(phaseSUPERSTEP)
 }
 
-// Expose for RPC interface
-func (w *Worker) QueueMessages(msgs []Msg) {
-	go w.inq.addMsgs(msgs)
-}
-
-// Expose for RPC interface
-func (w *Worker) QueueVertices(verts []Vertex) {
-	go w.vinq.addVertices(verts)
-}
-
 func (w *Worker) outputResults() {
 	if w.resultWriter != nil {
 		if err := w.resultWriter.WriteResults(w); err != nil {
@@ -370,4 +351,24 @@ func (w *Worker) outputResults() {
 	}
 
 	go w.sendSummary(phaseWRITE)
+}
+
+func (w *Worker) Run() {
+	w.rpcClient.Init()
+	w.rpcServ.Start(w)
+
+	done := make(chan int)
+	for {
+		if err := w.discoverMaster(); err != nil {
+			panic(err)
+		}
+		if err := w.register(); err != nil {
+			panic(err)
+		}
+		if w.jobId != "" {
+			break
+		}
+		log.Printf("Job registration unsuccessful.  Trying again.")
+	}
+	<-done
 }

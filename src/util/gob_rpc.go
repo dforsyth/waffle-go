@@ -220,7 +220,7 @@ func (s *GobWorkerRpcServer) ExecPhase(exec *PhaseExec, resp *Resp) os.Error {
 
 func (s *GobWorkerRpcServer) RecieveTopology(info *TopologyInfo, resp *Resp) os.Error {
 	*resp = OK
-	s.worker.SetJobTopology(info.WorkerMap, info.PartitionMap)
+	s.worker.SetTopology(info.WorkerMap, info.PartitionMap)
 	return nil
 }
 

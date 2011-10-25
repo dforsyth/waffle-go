@@ -4,7 +4,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"sort"
 	"time"
 	"sync"
 )
@@ -22,20 +21,21 @@ func newWorkerInfo() *workerInfo {
 	}
 }
 
-type masterConfig struct {
-	minWorkers        uint64
-	registerWait      int64
-	partsPerWorker    uint64
-	heartbeatInterval int64
-	heartbeatTimeout  int64
+type Config struct {
+	MinWorkers          uint64
+	RegisterWait        int64
+	PartitionsPerWorker uint64
+	HeartbeatInterval   int64
+	HeartbeatTimeout    int64
+	MaxSteps            uint64
+	JobId               string
 }
 
 type Master struct {
 	node
 
-	config masterConfig
+	Config Config
 
-	jobId     string
 	currPhase int
 	regch     chan byte
 	barrierCh chan *PhaseSummary
@@ -69,7 +69,7 @@ func (m *Master) EnterBarrier(summary *PhaseSummary) os.Error {
 func (m *Master) barrier(ch chan *PhaseSummary) {
 	bmap := make(map[string]interface{})
 	for ps := range ch {
-		if m.jobId != ps.JobId {
+		if m.Config.JobId != ps.JobId {
 			log.Fatalf("JobId mismatch in enterBarrier")
 		}
 		if m.currPhase != ps.PhaseId {
@@ -84,19 +84,12 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 	}
 }
 
-func NewMaster(addr, port, jobId string, minWorkers, partsPerWorker uint64, registerWait, heartbeatInterval, heartbeatTimeout int64) *Master {
+func NewMaster(addr, port string) *Master {
 	m := &Master{
 		regch:     make(chan byte, 1),
 		barrierCh: make(chan *PhaseSummary),
 		wInfo:     make(map[string]*workerInfo),
 	}
-
-	m.jobId = jobId
-	m.config.partsPerWorker = partsPerWorker
-	m.config.registerWait = registerWait
-	m.config.heartbeatInterval = heartbeatInterval
-	m.config.heartbeatTimeout = heartbeatTimeout
-	m.config.minWorkers = minWorkers
 
 	m.InitNode(addr, port)
 	m.regch <- 1
@@ -152,14 +145,9 @@ func (m *Master) startRPC() os.Error {
 	return nil
 }
 
-// Set partitions per worker
-func (m *Master) SetPartitionsPerWorker(partsPerWorker uint64) {
-	m.config.partsPerWorker = partsPerWorker
-}
-
 func (m *Master) ekg(id string) {
 	/*
-		msg := &BasicMasterMsg{JobId: m.jobId}
+		msg := &BasicMasterMsg{JobId: m.Config.JobId}
 		cl, e := m.cl(id)
 		if e != nil {
 			panic(e.String())
@@ -202,7 +190,7 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, os.Error) {
 	m.workerMap[workerId] = net.JoinHostPort(addr, port)
 	m.wInfo[workerId] = newWorkerInfo()
 
-	jobId := m.jobId
+	jobId := m.Config.JobId
 
 	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, jobId)
 	go m.ekg(workerId)
@@ -216,11 +204,11 @@ func (m *Master) registerWorkers() os.Error {
 	m.workerMap = make(map[string]string)
 
 	// Should do this in a more Go-ish way, maybe with a select statement?
-	for timer := 0; uint64(len(m.workerMap)) < m.config.minWorkers || int64(timer) < m.config.registerWait; timer += 1 * 1e9 {
+	for timer := 0; uint64(len(m.workerMap)) < m.Config.MinWorkers || int64(timer) < m.Config.RegisterWait; timer += 1 * 1e9 {
 		<-time.After(1 * 1e9)
 	}
 
-	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.config.minWorkers && m.config.registerWait > 0 {
+	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
 		return os.NewError("Not enough workers registered")
 	}
 
@@ -231,17 +219,10 @@ func (m *Master) registerWorkers() os.Error {
 func (m *Master) determinePartitions() {
 	log.Printf("Designating partitions")
 
-	// iteration order undefined across platforms, pull out values and sort.
-	workers := make([]string, 0, len(m.workerMap))
-	for id := range m.workerMap {
-		workers = append(workers, id)
-	}
-	sort.Strings(workers)
-
 	m.partitionMap = make(map[uint64]string)
 	p := 0
-	for _, id := range workers {
-		for i := 0; i < int(m.config.partsPerWorker); i, p = i+1, p+1 {
+	for _, id := range m.workerMap {
+		for i := 0; i < int(m.Config.PartitionsPerWorker); i, p = i+1, p+1 {
 			m.partitionMap[uint64(p)] = id
 		}
 	}
@@ -251,13 +232,13 @@ func (m *Master) determinePartitions() {
 	// Should be a seperate function/phase
 	log.Printf("Distributing worker and partition information")
 
+	topInfo := &TopologyInfo{JobId: m.Config.JobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}
 	var wg sync.WaitGroup
-	for _, workerAddr := range workers {
+	for _, workerAddr := range m.workerMap {
 		addr := workerAddr
 		wg.Add(1)
 		go func() {
-			if err := m.rpcClient.PushTopology(addr,
-				&TopologyInfo{JobId: m.jobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}); err != nil {
+			if err := m.rpcClient.PushTopology(addr, topInfo); err != nil {
 				panic(err)
 			}
 			wg.Done()
@@ -283,13 +264,13 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 // data source and enter a barrier.  Once the barrier is full, the worker will be told to load vertices
 // that were sent to it during the previous phase (because they did not belong on the worker that loaded
 // them).
-func (m *Master) loadVertices() os.Error {
+func (m *Master) loadPhase1() os.Error {
 	log.Printf("Instructing workers to do first phase of data load")
 
 	m.currPhase = phaseLOAD1
 
 	exec := &PhaseExec{PhaseId: phaseLOAD1}
-	exec.JobId = m.jobId
+	exec.JobId = m.Config.JobId
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
@@ -298,13 +279,13 @@ func (m *Master) loadVertices() os.Error {
 	return nil
 }
 
-func (m *Master) loadVerticesQueue() os.Error {
+func (m *Master) loadPhase2() os.Error {
 	log.Printf("Instructing workers to do second phase of data load")
 
 	m.currPhase = phaseLOAD2
 
 	exec := &PhaseExec{PhaseId: phaseLOAD2}
-	exec.JobId = m.jobId
+	exec.JobId = m.Config.JobId
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
@@ -320,8 +301,8 @@ func (m *Master) compute() os.Error {
 	log.Printf("Active verts = %d", m.activeVerts)
 	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
-		m.prepareWorkers()
-		m.execStep()
+		m.prepare()
+		m.step()
 	}
 
 	log.Printf("Computation complete")
@@ -329,13 +310,13 @@ func (m *Master) compute() os.Error {
 }
 
 // prepare workers for the next superstep
-func (m *Master) prepareWorkers() os.Error {
+func (m *Master) prepare() os.Error {
 	m.currPhase = phaseSTEPPREPARE
 
 	exec := &PhaseExec{
 		PhaseId: phaseSTEPPREPARE,
 	}
-	exec.JobId = m.jobId
+	exec.JobId = m.Config.JobId
 
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
@@ -345,8 +326,8 @@ func (m *Master) prepareWorkers() os.Error {
 }
 
 // superstep
-func (m *Master) execStep() os.Error {
-	log.Printf("Starting step %d -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
+func (m *Master) step() os.Error {
+	log.Printf("Running step %d", m.superstep)
 
 	m.currPhase = phaseSUPERSTEP
 
@@ -356,11 +337,12 @@ func (m *Master) execStep() os.Error {
 		NumVerts:   m.numVertices,
 		Checkpoint: m.checkpointFn(m.superstep),
 	}
-	exec.JobId = m.jobId
+	exec.JobId = m.Config.JobId
 
 	m.resetJobInfo()
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh)
+	log.Printf("Step %d complete -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
 
 	return nil
 }
@@ -383,7 +365,7 @@ func (m *Master) outputResults() os.Error {
 // shutdown workers
 func (m *Master) endWorkers() os.Error {
 	/*
-		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.jobId}, nil); e != nil {
+		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
 			panic(e)
 		}
 		// don't wait for a notify on this call	
@@ -407,8 +389,8 @@ func (m *Master) Run() {
 	// Loading is a two step process: first we do the initial load by worker,
 	// sending verts off to the correct worker if need be.  Then, we do a
 	// second load step, where anything that was sent around is loaded.
-	m.loadVertices()
-	m.loadVerticesQueue()
+	m.loadPhase1()
+	m.loadPhase2()
 	m.startTime = time.Seconds()
 
 	// computation phase
