@@ -396,7 +396,7 @@ func (m *Master) Run() {
 	// computation phase
 	m.compute()
 
-	// output results and shutdow workers
+	// output results and shutdown workers
 	m.outputResults()
 	m.endTime = time.Seconds()
 
