@@ -42,6 +42,11 @@ type jobStat struct {
 	numVertices uint64
 }
 
+type WorkerConfig struct {
+	MessageThreshold int64
+	VertexThreshold  int64
+}
+
 type Worker struct {
 	node
 	workerId string
@@ -54,6 +59,8 @@ type Worker struct {
 
 	lastCheckpoint bool
 	lastSuperstep  uint64
+
+	Config WorkerConfig
 
 	phaseStats phaseStat
 	jobStats   jobStat
@@ -93,17 +100,11 @@ const (
 	STORE
 )
 
-func NewWorker(addr, port string, msgThreshold, vertThreshold int64) *Worker {
+func NewWorker(addr, port string) *Worker {
 	w := &Worker{
 		state:      NONE,
 		partitions: make(map[uint64]*Partition),
 	}
-
-	w.msgs = newInMsgQ()
-	w.inq = newInMsgQ()
-	w.outq = newOutMsgQ(w, msgThreshold)
-	w.vinq = newInVertexQ()
-	w.voutq = newOutVertexQ(w, vertThreshold)
 
 	w.stepInfo, w.lastStepInfo = &stepInfo{}, &stepInfo{}
 
@@ -356,6 +357,12 @@ func (w *Worker) outputResults() {
 func (w *Worker) Run() {
 	w.rpcClient.Init()
 	w.rpcServ.Start(w)
+
+	w.msgs = newInMsgQ()
+	w.inq = newInMsgQ()
+	w.outq = newOutMsgQ(w, w.Config.MessageThreshold)
+	w.vinq = newInVertexQ()
+	w.voutq = newOutVertexQ(w, w.Config.VertexThreshold)
 
 	done := make(chan int)
 	for {

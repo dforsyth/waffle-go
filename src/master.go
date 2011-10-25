@@ -21,7 +21,7 @@ func newWorkerInfo() *workerInfo {
 	}
 }
 
-type Config struct {
+type MasterConfig struct {
 	MinWorkers          uint64
 	RegisterWait        int64
 	PartitionsPerWorker uint64
@@ -34,7 +34,7 @@ type Config struct {
 type Master struct {
 	node
 
-	Config Config
+	Config MasterConfig
 
 	currPhase int
 	regch     chan byte
