@@ -1,9 +1,5 @@
 package waffle
 
-import (
-	"os"
-)
-
 // messages passed from vert to vert
 type Msg interface {
 	DestVertId() string
@@ -87,13 +83,4 @@ type PhaseSummary struct {
 	SentVerts   uint64
 	SentMsgs    uint64
 	PhaseTime   int64
-}
-
-func (s *PhaseSummary) addError(err os.Error) {
-	/*
-		if s.Errors == nil {
-			s.Errors = make([]os.Error, 0)
-		}
-		s.Errors = append(s.Errors, err)
-	*/
 }

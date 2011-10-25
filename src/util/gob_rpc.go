@@ -132,7 +132,7 @@ func (c *GobWorkerRpcClient) Register(masterAddr, host, port string) (string, st
 	return resp.WorkerId, resp.JobId, nil
 }
 
-func (c *GobWorkerRpcClient) PhaseResult(masterAddr string, summary *PhaseSummary) os.Error {
+func (c *GobWorkerRpcClient) SendSummary(masterAddr string, summary *PhaseSummary) os.Error {
 	mclient, err := c.masterClient(masterAddr)
 	if err != nil {
 		return err

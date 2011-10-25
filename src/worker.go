@@ -26,6 +26,10 @@ func (s *phaseStat) end() {
 	s.endTime = time.Seconds()
 }
 
+func (s *phaseStat) addError(err os.Error) {
+	// pass
+}
+
 type stepInfo struct {
 	activeVertices uint64
 	numVertices    uint64
@@ -161,9 +165,9 @@ func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
 	// Determine the phaseId and dispatch
 	switch exec.PhaseId {
 	case phaseLOAD1:
-		go w.loadVertices()
+		go w.loadPhase1()
 	case phaseLOAD2:
-		go w.loadVerticesQueue()
+		go w.loadPhase2()
 	case phaseSTEPPREPARE:
 		go w.prepareForStep()
 	case phaseSUPERSTEP:
@@ -180,6 +184,7 @@ func (w *Worker) Run() {
 	w.rpcClient.Init()
 	w.rpcServ.Start(w)
 
+	done := make(chan int)
 	for {
 		if err := w.discoverMaster(); err != nil {
 			panic(err)
@@ -192,33 +197,26 @@ func (w *Worker) Run() {
 		}
 		log.Printf("Job registration unsuccessful.  Trying again.")
 	}
-
-	w.phaseSummaryLoop()
+	<-done
 }
 
-// This loop waits for phases to end then notifies master
-func (w *Worker) phaseSummaryLoop() {
-	w.endCh = make(chan *PhaseSummary)
-	for ps := range w.endCh {
-		// end the phase and fill in some of the summary
-		w.phaseStats.end()
+func (w *Worker) sendSummary(phaseId int) {
+	w.phaseStats.end()
 
-		ps.JobId = w.jobId
-		ps.WorkerId = w.workerId
-		ps.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
-		log.Printf("worker %s ran phase in %d seconds", ps.WorkerId, ps.PhaseTime)
-		ps.ActiveVerts = 0
-		ps.NumVerts = 0
-		for _, p := range w.partitions {
-			ps.ActiveVerts += p.numActiveVertices()
-			ps.NumVerts += p.numVertices()
-		}
-		log.Printf("worker %s has %d active and %d total vertices", ps.WorkerId, ps.ActiveVerts, ps.NumVerts)
-		ps.SentMsgs = w.outq.numSent()
-		log.Printf("worker %s sent %d messages", ps.WorkerId, ps.SentMsgs)
+	ps := &PhaseSummary{PhaseId: phaseId}
 
-		w.rpcClient.PhaseResult(net.JoinHostPort(w.mhost, w.mport), ps)
+	ps.JobId = w.jobId
+	ps.WorkerId = w.workerId
+	ps.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
+	ps.ActiveVerts = 0
+	ps.NumVerts = 0
+	for _, p := range w.partitions {
+		ps.ActiveVerts += p.numActiveVertices()
+		ps.NumVerts += p.numVertices()
 	}
+	ps.SentMsgs = w.outq.numSent()
+
+	w.rpcClient.SendSummary(net.JoinHostPort(w.mhost, w.mport), ps)
 }
 
 func (w *Worker) discoverMaster() os.Error {
@@ -254,9 +252,7 @@ func (w *Worker) SetJobTopology(workerMap map[string]string, partitionMap map[ui
 	}
 }
 
-func (w *Worker) loadVertices() {
-	summary := &PhaseSummary{PhaseId: phaseLOAD1}
-
+func (w *Worker) loadPhase1() {
 	if w.loader != nil {
 		// At some point, should add code to load from the queue while
 		// direct loading is going on.
@@ -265,21 +261,21 @@ func (w *Worker) loadVertices() {
 			w.voutq.flush()
 			w.voutq.wait.Wait()
 		} else {
-			summary.addError(err)
+			w.phaseStats.addError(err)
 		}
 	} else {
 		log.Printf("worker %d has no loader", w.workerId)
 	}
 
-	w.endCh <- summary
+	go w.sendSummary(phaseLOAD1)
 }
 
-func (w *Worker) loadVerticesQueue() {
+func (w *Worker) loadPhase2() {
 	for _, v := range w.vinq.verts {
 		w.AddVertex(v)
 	}
 
-	w.endCh <- &PhaseSummary{PhaseId: phaseLOAD2}
+	go w.sendSummary(phaseLOAD2)
 }
 
 func (w *Worker) AddVertex(v Vertex) {
@@ -303,25 +299,24 @@ func (w *Worker) prepareForStep() {
 
 	log.Println("StepPrepare complete")
 
-	w.endCh <- &PhaseSummary{PhaseId: phaseSTEPPREPARE}
+	go w.sendSummary(phaseSTEPPREPARE)
 }
 
 // Execute a single superstep
 func (w *Worker) step(pe *PhaseExec) {
-	summary := &PhaseSummary{PhaseId: phaseSUPERSTEP}
 
 	superstep, checkpoint := pe.Superstep, pe.Checkpoint
 	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
-		summary.addError(os.NewError("Superstep did not increment by one"))
-		w.endCh <- summary
+		w.phaseStats.addError(os.NewError("Superstep did not increment by one"))
+		go w.sendSummary(phaseSUPERSTEP)
 		return
 	}
 
 	if checkpoint {
 		if w.persister != nil {
 			if err := w.persister.Write(w); err != nil {
-				summary.addError(err)
-				w.endCh <- summary
+				w.phaseStats.addError(err)
+				go w.sendSummary(phaseSUPERSTEP)
 				return
 			}
 		} else {
@@ -351,7 +346,7 @@ func (w *Worker) step(pe *PhaseExec) {
 
 	log.Println("Superstep complete")
 
-	w.endCh <- summary
+	go w.sendSummary(phaseSUPERSTEP)
 }
 
 // Expose for RPC interface
@@ -365,15 +360,14 @@ func (w *Worker) QueueVertices(verts []Vertex) {
 }
 
 func (w *Worker) outputResults() {
-	summary := &PhaseSummary{PhaseId: phaseWRITE}
 	if w.resultWriter != nil {
 		if err := w.resultWriter.WriteResults(w); err != nil {
-			summary.addError(err)
+			w.phaseStats.addError(err)
 		}
 		log.Println("WriteResults complete")
 	} else {
 		log.Println("No ResultWriter set for this worker")
 	}
 
-	w.endCh <- summary
+	go w.sendSummary(phaseWRITE)
 }
