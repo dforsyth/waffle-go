@@ -24,19 +24,6 @@ func (c *GobRpcClientBase) init() {
 	gob.Register(&MsgBase{})
 }
 
-// Type registration for encoders/decoders
-func (c *GobRpcClientBase) RegisterVertex(v Vertex) {
-	gob.Register(v)
-}
-
-func (c *GobRpcClientBase) RegisterMsg(m Msg) {
-	gob.Register(m)
-}
-
-func (c *GobRpcClientBase) RegisterEdge(e Edge) {
-	gob.Register(e)
-}
-
 type GobMasterRpcClient struct {
 	GobRpcClientBase
 }
