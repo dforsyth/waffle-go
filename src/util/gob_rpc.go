@@ -8,6 +8,13 @@ import (
 	"sync"
 )
 
+type Resp int
+
+const (
+	OK = iota
+	NOT_OK
+)
+
 // GobRpc will ship with the base distribution
 type GobRpcClientBase struct {
 	lock          sync.Mutex

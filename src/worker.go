@@ -207,7 +207,7 @@ func (w *Worker) QueueVertices(verts []Vertex) {
 func (w *Worker) AddVertex(v Vertex) {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
-	pid := w.getPartitionOf(v.VertexId())
+	pid := w.partitionOf(v.VertexId())
 	wid := w.partitionMap[pid]
 	if wid == w.workerId {
 		w.partitions[pid].addVertex(v)
@@ -225,6 +225,7 @@ func (w *Worker) sendSummary(phaseId int) error {
 		SentMsgs:    w.outq.numSent(),
 		ActiveVerts: 0,
 		NumVerts:    0,
+		Error:       w.phaseStats.error,
 	}
 
 	for _, p := range w.partitions {

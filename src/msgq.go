@@ -106,7 +106,7 @@ func (q *OutMsgQ) sendMsgsAsync(id string, msgs []Msg) chan interface{} {
 func (q *OutMsgQ) addMsg(msg Msg) {
 	q.m.Lock()
 	defer q.m.Unlock()
-	pid := q.worker.getPartitionOf(msg.DestVertId())
+	pid := q.worker.partitionOf(msg.DestVertId())
 	wid := q.worker.partitionMap[pid]
 	if _, ok := q.out[wid]; !ok {
 		q.out[wid] = make([]Msg, 0)

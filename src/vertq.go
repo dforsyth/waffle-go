@@ -57,7 +57,7 @@ func newOutVertexQ(w *Worker, thresh int64) *OutVertexQ {
 
 func (q *OutVertexQ) addVertex(v Vertex) {
 	<-q.s
-	pid := q.worker.getPartitionOf(v.VertexId())
+	pid := q.worker.partitionOf(v.VertexId())
 	wid := q.worker.partitionMap[pid]
 	if _, ok := q.verts[wid]; !ok {
 		q.verts[wid] = make([]Vertex, 0)

@@ -6,13 +6,6 @@ type Msg interface {
 	SetDestVertId(string)
 }
 
-type Resp int
-
-const (
-	OK = iota
-	NOT_OK
-)
-
 type MsgBase struct {
 	DestId string
 }
@@ -25,27 +18,17 @@ func (m *MsgBase) SetDestVertId(dest string) {
 	m.DestId = dest
 }
 
-type RemoveVertexMsg struct {
-	MsgBase
-}
+const (
+	vadd = iota
+	vrem
+	eadd
+	erem
+)
 
-type RemoveEdgeMsg struct {
+type MutationMsg struct {
 	MsgBase
-	TargetId string
-}
-
-type AddVertexMsg struct {
-	MsgBase
-	V Vertex
-}
-
-type AddEdgeMsg struct {
-	MsgBase
-	E Edge
-}
-
-type BasicMasterMsg struct {
-	JobId string
+	MutType int
+	Change  interface{}
 }
 
 type RegisterInfo struct {
@@ -54,8 +37,8 @@ type RegisterInfo struct {
 }
 
 type RegisterResp struct {
-	WorkerId string
 	JobId    string
+	WorkerId string
 }
 
 type TopologyInfo struct {
@@ -74,10 +57,10 @@ type PhaseExec struct {
 }
 
 type PhaseSummary struct {
-	JobId    string
-	WorkerId string
-	PhaseId  int
-	// Errors []os.Error
+	JobId       string
+	WorkerId    string
+	PhaseId     int
+	Error       error
 	ActiveVerts uint64
 	NumVerts    uint64
 	SentVerts   uint64

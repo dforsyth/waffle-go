@@ -76,6 +76,9 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 			log.Fatalf("Phase mismatch in enterBarrier from worker %s", ps.WorkerId)
 		}
 
+		if ps.Error != nil {
+			// handle error
+		}
 		m.collectSummaryInfo(ps)
 		bmap[ps.WorkerId] = nil
 		if len(bmap) == len(m.workerMap) {
@@ -113,12 +116,12 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 // Zero out the stats from the last step
 func (m *Master) resetJobInfo() {
 	// this doesnt even really need the locking -- it shouldnt happen while a barrier is accepting workers
+	log.Println("resetting job info")
 	m.mPhaseInfo.Lock()
 	m.activeVerts = 0
 	m.sentMsgs = 0
 	m.numVertices = 0
 	m.mPhaseInfo.Unlock()
-	log.Println("reset complete")
 }
 
 // Update the stats from the current step
@@ -228,8 +231,9 @@ func (m *Master) determinePartitions() {
 	}
 
 	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerMap))
+}
 
-	// Should be a seperate function/phase
+func (m *Master) pushTopology() {
 	log.Printf("Distributing worker and partition information")
 
 	topInfo := &TopologyInfo{JobId: m.Config.JobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}
@@ -288,7 +292,9 @@ func (m *Master) compute() error {
 	log.Printf("Active verts = %d", m.activeVerts)
 	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
+		log.Printf("preparing for superstep %d", m.superstep)
 		m.executePhase(phaseSTEPPREPARE)
+		log.Printf("starting superstep %d", m.superstep)
 		m.executePhase(phaseSUPERSTEP)
 	}
 
@@ -319,6 +325,7 @@ func (m *Master) Run() {
 
 	m.registerWorkers()
 	m.determinePartitions()
+	m.pushTopology()
 
 	m.executePhase(phaseLOAD1)
 	m.executePhase(phaseLOAD2)

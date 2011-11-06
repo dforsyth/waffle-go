@@ -57,25 +57,37 @@ func (v *VertexBase) removeOutEdge(target string) {
 }
 
 func (v *VertexBase) RemoveOutEdgeFrom(source, target string) {
-	msg := &RemoveEdgeMsg{TargetId: target}
+	msg := &MutationMsg{
+		MutType: erem,
+		Change:  []string{source, target},
+	}
 	msg.SetDestVertId(source)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
 func (v *VertexBase) RemoveVertex(id string) {
-	msg := &RemoveVertexMsg{}
+	msg := &MutationMsg{
+		MutType: vrem,
+		Change:  id,
+	}
 	msg.SetDestVertId(id)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
 func (v *VertexBase) AddOutEdgeTo(source string, e Edge) {
-	msg := &AddEdgeMsg{E: e}
+	msg := &MutationMsg{
+		MutType: eadd,
+		Change:  e,
+	}
 	msg.SetDestVertId(source)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
 func (v *VertexBase) AddVertex(vert Vertex) {
-	msg := &AddVertexMsg{V: vert}
+	msg := &MutationMsg{
+		MutType: vadd,
+		Change:  v,
+	}
 	msg.SetDestVertId(v.VertexId())
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
