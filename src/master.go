@@ -1,11 +1,11 @@
 package waffle
 
 import (
+	"errors"
 	"log"
 	"net"
-	"os"
-	"time"
 	"sync"
+	"time"
 )
 
 type workerInfo struct {
@@ -58,7 +58,7 @@ type Master struct {
 	rpcClient MasterRpcClient
 }
 
-func (m *Master) EnterBarrier(summary *PhaseSummary) os.Error {
+func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 	go func() {
 		m.barrierCh <- summary
 	}()
@@ -139,7 +139,7 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 }
 
 // Init RPC
-func (m *Master) startRPC() os.Error {
+func (m *Master) startRPC() error {
 	m.rpcServ.Start(m)
 	m.rpcClient.Init()
 	return nil
@@ -177,7 +177,7 @@ func (m *Master) ekg(id string) {
 	*/
 }
 
-func (m *Master) RegisterWorker(addr, port string) (string, string, os.Error) {
+func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
 	<-m.regch
 	defer func() { m.regch <- 1 }()
 
@@ -198,7 +198,7 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, os.Error) {
 	return workerId, jobId, nil
 }
 
-func (m *Master) registerWorkers() os.Error {
+func (m *Master) registerWorkers() error {
 	log.Printf("Starting registration phase")
 
 	m.workerMap = make(map[string]string)
@@ -209,7 +209,7 @@ func (m *Master) registerWorkers() os.Error {
 	}
 
 	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
-		return os.NewError("Not enough workers registered")
+		return errors.New("Not enough workers registered")
 	}
 
 	log.Printf("Registration phase complete")
@@ -249,7 +249,7 @@ func (m *Master) determinePartitions() {
 	log.Printf("Done distributing worker and partition info")
 }
 
-func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
+func (m *Master) sendExecToAllWorkers(exec *PhaseExec) error {
 	for _, workerAddr := range m.workerMap {
 		addr := workerAddr
 		go func() {
@@ -258,112 +258,46 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 			}
 		}()
 	}
-}
-
-// Data loading is actually a two step phase: first, a worker will load the vertices from its designated
-// data source and enter a barrier.  Once the barrier is full, the worker will be told to load vertices
-// that were sent to it during the previous phase (because they did not belong on the worker that loaded
-// them).
-func (m *Master) loadPhase1() os.Error {
-	log.Printf("Instructing workers to do first phase of data load")
-
-	m.currPhase = phaseLOAD1
-
-	exec := &PhaseExec{PhaseId: phaseLOAD1}
-	exec.JobId = m.Config.JobId
-	m.resetJobInfo()
-	m.sendExecToAllWorkers(exec)
-	m.barrier(m.barrierCh)
-
-	log.Printf("Done first phase of data load")
 	return nil
 }
 
-func (m *Master) loadPhase2() os.Error {
-	log.Printf("Instructing workers to do second phase of data load")
+func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
+	return &PhaseExec{
+		PhaseId:    phaseId,
+		JobId:      m.Config.JobId,
+		Superstep:  m.superstep,
+		NumVerts:   m.numVertices,
+		Checkpoint: m.checkpointFn(m.superstep),
+	}
+}
 
-	m.currPhase = phaseLOAD2
-
-	exec := &PhaseExec{PhaseId: phaseLOAD2}
-	exec.JobId = m.Config.JobId
+func (m *Master) executePhase(phaseId int) error {
+	m.currPhase = phaseId
 	m.resetJobInfo()
-	m.sendExecToAllWorkers(exec)
+	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
+		return err
+	}
 	m.barrier(m.barrierCh)
-
-	log.Printf("Done second phase of data load")
 	return nil
 }
 
 // run supersteps until there are no more active vertices or queued messages
-func (m *Master) compute() os.Error {
+func (m *Master) compute() error {
 	log.Printf("Starting computation")
 
 	log.Printf("Active verts = %d", m.activeVerts)
 	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
-		m.prepare()
-		m.step()
+		m.executePhase(phaseSTEPPREPARE)
+		m.executePhase(phaseSUPERSTEP)
 	}
 
 	log.Printf("Computation complete")
 	return nil
 }
 
-// prepare workers for the next superstep
-func (m *Master) prepare() os.Error {
-	m.currPhase = phaseSTEPPREPARE
-
-	exec := &PhaseExec{
-		PhaseId: phaseSTEPPREPARE,
-	}
-	exec.JobId = m.Config.JobId
-
-	m.resetJobInfo()
-	m.sendExecToAllWorkers(exec)
-	m.barrier(m.barrierCh)
-
-	return nil
-}
-
-// superstep
-func (m *Master) step() os.Error {
-	log.Printf("Running step %d", m.superstep)
-
-	m.currPhase = phaseSUPERSTEP
-
-	exec := &PhaseExec{
-		PhaseId:    phaseSUPERSTEP,
-		Superstep:  m.superstep,
-		NumVerts:   m.numVertices,
-		Checkpoint: m.checkpointFn(m.superstep),
-	}
-	exec.JobId = m.Config.JobId
-
-	m.resetJobInfo()
-	m.sendExecToAllWorkers(exec)
-	m.barrier(m.barrierCh)
-	log.Printf("Step %d complete -> (active: %d, total: %d, sent: %d)", m.superstep, m.activeVerts, m.numVertices, m.sentMsgs)
-
-	return nil
-}
-
-// instruct workers to write results
-func (m *Master) outputResults() os.Error {
-	log.Printf("Instructing workers to write results")
-
-	m.currPhase = phaseWRITE
-
-	exec := &PhaseExec{PhaseId: phaseWRITE}
-	m.resetJobInfo()
-	m.sendExecToAllWorkers(exec)
-	m.barrier(m.barrierCh)
-
-	log.Printf("Workers have written results")
-	return nil
-}
-
 // shutdown workers
-func (m *Master) endWorkers() os.Error {
+func (m *Master) endWorkers() error {
 	/*
 		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
 			panic(e)
@@ -386,19 +320,11 @@ func (m *Master) Run() {
 	m.registerWorkers()
 	m.determinePartitions()
 
-	// Loading is a two step process: first we do the initial load by worker,
-	// sending verts off to the correct worker if need be.  Then, we do a
-	// second load step, where anything that was sent around is loaded.
-	m.loadPhase1()
-	m.loadPhase2()
+	m.executePhase(phaseLOAD1)
+	m.executePhase(phaseLOAD2)
 	m.startTime = time.Seconds()
-
-	// computation phase
 	m.compute()
-
-	// output results and shutdown workers
-	m.outputResults()
 	m.endTime = time.Seconds()
-
-	log.Printf("Job run time (post load) was %d seconds", m.endTime-m.startTime)
+	m.executePhase(phaseWRITE)
+	log.Printf("computer time was %d", m.endTime-m.startTime)
 }

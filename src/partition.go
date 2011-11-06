@@ -1,9 +1,5 @@
 package waffle
 
-import (
-	"os"
-)
-
 type Partition struct {
 	id     uint64
 	verts  map[string]Vertex
@@ -31,7 +27,7 @@ func (p *Partition) Vertices() map[string]Vertex {
 	return p.verts
 }
 
-func (p *Partition) compute() os.Error {
+func (p *Partition) compute() error {
 	// TODO Handle mutations
 	for _, v := range p.verts {
 		msgs := p.worker.msgs.msgs(v.VertexId())

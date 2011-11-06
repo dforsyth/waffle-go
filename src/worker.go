@@ -1,16 +1,27 @@
 package waffle
 
 import (
+	"errors"
 	"log"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
 
+type phaseFn func(*Worker, *PhaseExec) error
+
+var phaseMap map[int]phaseFn = map[int]phaseFn{
+	phaseLOAD1:       loadPhase1,
+	phaseLOAD2:       loadPhase2,
+	phaseSTEPPREPARE: stepPrepare,
+	phaseSUPERSTEP:   step,
+	phaseWRITE:       writeResults,
+}
+
 type phaseStat struct {
 	startTime int64
 	endTime   int64
+	error     error
 }
 
 func (s *phaseStat) reset() {
@@ -26,7 +37,7 @@ func (s *phaseStat) end() {
 	s.endTime = time.Seconds()
 }
 
-func (s *phaseStat) addError(err os.Error) {
+func (s *phaseStat) addError(err error) {
 	// pass
 }
 
@@ -88,21 +99,8 @@ type Worker struct {
 	endCh chan *PhaseSummary
 }
 
-// Worker state
-const (
-	NONE = iota
-	INIT
-	WAIT
-	REGISTER
-	LOAD_1
-	LOAD_2
-	COMPUTE
-	STORE
-)
-
 func NewWorker(addr, port string) *Worker {
 	w := &Worker{
-		state:      NONE,
 		partitions: make(map[uint64]*Partition),
 	}
 
@@ -169,27 +167,30 @@ func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint6
 	}
 }
 
-// Expose for RPC interface
-func (w *Worker) ExecPhase(exec *PhaseExec) os.Error {
-	// Reset phase stats
+// execute a phase function
+func (w *Worker) executePhase(phaseFn phaseFn, exec *PhaseExec) {
 	w.phaseStats.reset()
 	w.phaseStats.start()
-
-	// Determine the phaseId and dispatch
-	switch exec.PhaseId {
-	case phaseLOAD1:
-		go w.loadPhase1()
-	case phaseLOAD2:
-		go w.loadPhase2()
-	case phaseSTEPPREPARE:
-		go w.prepareForStep()
-	case phaseSUPERSTEP:
-		go w.step(exec)
-	case phaseWRITE:
-		go w.outputResults()
-	default:
-		panic(os.NewError("No phase identified"))
+	if err := phaseFn(w, exec); err != nil {
+		log.Printf("phaseFn finished with error: %v", err)
+		w.phaseStats.error = err
 	}
+	w.phaseStats.end()
+	if err := w.sendSummary(exec.PhaseId); err != nil {
+		// handle summary send failure
+	}
+}
+
+// Expose for RPC interface
+// ExecPhase only returns a non nil error if the phase cannot be identified
+func (w *Worker) ExecPhase(exec *PhaseExec) error {
+	// Determine the phaseId and dispatch
+	var fn phaseFn
+	var ok bool
+	if fn, ok = phaseMap[exec.PhaseId]; !ok {
+		return errors.New("No valid phase specified")
+	}
+	go w.executePhase(fn, exec)
 	return nil
 }
 
@@ -203,7 +204,7 @@ func (w *Worker) QueueVertices(verts []Vertex) {
 	go w.vinq.addVertices(verts)
 }
 
-func (w *Worker) addVertex(v Vertex) {
+func (w *Worker) AddVertex(v Vertex) {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
 	pid := w.getPartitionOf(v.VertexId())
@@ -215,32 +216,32 @@ func (w *Worker) addVertex(v Vertex) {
 	}
 }
 
-func (w *Worker) sendSummary(phaseId int) {
-	w.phaseStats.end()
+func (w *Worker) sendSummary(phaseId int) error {
+	ps := &PhaseSummary{
+		PhaseId:     phaseId,
+		JobId:       w.jobId,
+		WorkerId:    w.workerId,
+		PhaseTime:   w.phaseStats.endTime - w.phaseStats.startTime,
+		SentMsgs:    w.outq.numSent(),
+		ActiveVerts: 0,
+		NumVerts:    0,
+	}
 
-	ps := &PhaseSummary{PhaseId: phaseId}
-
-	ps.JobId = w.jobId
-	ps.WorkerId = w.workerId
-	ps.PhaseTime = w.phaseStats.endTime - w.phaseStats.startTime
-	ps.ActiveVerts = 0
-	ps.NumVerts = 0
 	for _, p := range w.partitions {
 		ps.ActiveVerts += p.numActiveVertices()
 		ps.NumVerts += p.numVertices()
 	}
-	ps.SentMsgs = w.outq.numSent()
 
-	w.rpcClient.SendSummary(net.JoinHostPort(w.mhost, w.mport), ps)
+	return w.rpcClient.SendSummary(net.JoinHostPort(w.mhost, w.mport), ps)
 }
 
-func (w *Worker) discoverMaster() os.Error {
+func (w *Worker) discoverMaster() error {
 	// TODO Discover master
 	return nil
 }
 
 // Register step
-func (w *Worker) register() (err os.Error) {
+func (w *Worker) register() (err error) {
 	log.Println("Trying to register")
 	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.mhost, w.mport), w.Host(), w.Port()); err != nil {
 		return
@@ -249,70 +250,55 @@ func (w *Worker) register() (err os.Error) {
 	return
 }
 
-func (w *Worker) cleanup() os.Error {
+func (w *Worker) cleanup() error {
 	// w.rpcClient.Cleanup()
 	// w.rpcServ.Cleanup()
 	return nil
 }
 
-func (w *Worker) loadPhase1() {
+func loadPhase1(w *Worker, pe *PhaseExec) error {
 	if w.loader != nil {
-		// At some point, should add code to load from the queue while
-		// direct loading is going on.
-		w.loader.Init(w)
-		if loaded, err := w.loader.Load(); err == nil {
-			log.Printf("Loaded %d vertices", loaded)
+		if loaded, err := w.loader.Load(w); err != nil {
+			return err
+		} else {
+			log.Printf("loaded %d vertices", loaded)
 			w.voutq.flush()
 			w.voutq.wait.Wait()
-		} else {
-			w.phaseStats.addError(err)
 		}
 	} else {
-		log.Printf("worker %d has no loader", w.workerId)
+		log.Printf("worker %s has no loader", w.workerId)
 	}
-
-	go w.sendSummary(phaseLOAD1)
+	return nil
 }
 
-func (w *Worker) loadPhase2() {
+func loadPhase2(w *Worker, pe *PhaseExec) error {
 	for _, v := range w.vinq.verts {
-		w.addVertex(v)
+		w.AddVertex(v)
 	}
-
-	go w.sendSummary(phaseLOAD2)
+	return nil
 }
 
 // Prepase for the next superstep (message queue swaps and resets)
-func (w *Worker) prepareForStep() {
+func stepPrepare(w *Worker, pe *PhaseExec) error {
 	w.msgs, w.inq = w.inq, w.msgs
 	w.inq.clear()
 	w.outq.reset()
 	w.lastStepInfo, w.stepInfo = w.stepInfo, w.lastStepInfo
-
-	log.Println("StepPrepare complete")
-
-	go w.sendSummary(phaseSTEPPREPARE)
+	return nil
 }
 
 // Execute a single superstep
-func (w *Worker) step(pe *PhaseExec) {
-
+func step(w *Worker, pe *PhaseExec) error {
 	superstep, checkpoint := pe.Superstep, pe.Checkpoint
 	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
-		w.phaseStats.addError(os.NewError("Superstep did not increment by one"))
-		go w.sendSummary(phaseSUPERSTEP)
-		return
+		return errors.New("Superstep did not increment by one")
 	}
 
 	if checkpoint {
 		if w.persister != nil {
-			if err := w.persister.Write(w); err != nil {
-				w.phaseStats.addError(err)
-				go w.sendSummary(phaseSUPERSTEP)
-				return
-			}
+			return w.persister.Write(w)
 		} else {
-			log.Println("No Persister defined for this worker")
+			log.Printf("worker %s has no persister", w.workerId)
 		}
 	}
 
@@ -337,21 +323,16 @@ func (w *Worker) step(pe *PhaseExec) {
 	w.outq.wait.Wait()
 
 	log.Println("Superstep complete")
-
-	go w.sendSummary(phaseSUPERSTEP)
+	return nil
 }
 
-func (w *Worker) outputResults() {
+func writeResults(w *Worker, pe *PhaseExec) error {
 	if w.resultWriter != nil {
-		if err := w.resultWriter.WriteResults(w); err != nil {
-			w.phaseStats.addError(err)
-		}
-		log.Println("WriteResults complete")
+		return w.resultWriter.WriteResults(w)
 	} else {
-		log.Println("No ResultWriter set for this worker")
+		log.Println("worker %s has no resultWriter", w.workerId)
 	}
-
-	go w.sendSummary(phaseWRITE)
+	return nil
 }
 
 func (w *Worker) Run() {

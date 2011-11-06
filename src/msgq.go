@@ -1,9 +1,6 @@
 package waffle
 
-import (
-	"os"
-	"sync"
-)
+import "sync"
 
 type MsgQ interface {
 	addMsg(Msg)
@@ -77,7 +74,7 @@ func (q *OutMsgQ) reset() {
 	q.sent = 0
 }
 
-func (q *OutMsgQ) sendMsgs(wid string, msgs []Msg) os.Error {
+func (q *OutMsgQ) sendMsgs(wid string, msgs []Msg) error {
 	for _, combiner := range q.worker.combiners {
 		msgs = combiner.Combine(msgs)
 	}
@@ -127,7 +124,7 @@ func (q *OutMsgQ) flush() {
 	defer q.m.Unlock()
 	for wid, msgs := range q.out {
 		if e := q.sendMsgs(wid, msgs); e != nil {
-			panic(e.String())
+			panic(e.Error())
 		}
 	}
 	for wid := range q.out {

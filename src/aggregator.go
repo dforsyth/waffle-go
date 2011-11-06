@@ -1,11 +1,7 @@
 package waffle
 
-import (
-	"os"
-)
-
 type Aggregator interface {
-	Aggregate(*Worker) (string, interface{}, os.Error)
+	Aggregate(*Worker) (string, interface{}, error)
 	BeforeCompute(*Worker)
 	AfterCompute(*Worker)
 }

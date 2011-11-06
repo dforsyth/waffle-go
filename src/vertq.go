@@ -1,9 +1,6 @@
 package waffle
 
-import (
-	"os"
-	"sync"
-)
+import "sync"
 
 type VertexQ interface {
 	addVertex(v Vertex)
@@ -74,7 +71,7 @@ func (q *OutVertexQ) addVertex(v Vertex) {
 	q.s <- 1
 }
 
-func (q *OutVertexQ) flush() os.Error {
+func (q *OutVertexQ) flush() error {
 	<-q.s
 	for wid, verts := range q.verts {
 		if e := q.sendVertices(wid, verts); e != nil {
@@ -100,7 +97,7 @@ func (q *OutVertexQ) sendVerticesAsync(id string, verts []Vertex) chan interface
 	return ch
 }
 
-func (q *OutVertexQ) sendVertices(id string, verts []Vertex) os.Error {
+func (q *OutVertexQ) sendVertices(id string, verts []Vertex) error {
 
 	if id == q.worker.WorkerId() {
 		q.worker.vinq.addVertices(verts)

@@ -1,22 +1,18 @@
 package waffle
 
-import (
-	"os"
-)
-
 type WorkerRpcClient interface {
 	Init()
-	Register(string, string, string) (string, string, os.Error)
-	SendSummary(string, *PhaseSummary) os.Error
-	SendVertices(string, []Vertex) os.Error
-	SendMessages(string, []Msg) os.Error
+	Register(string, string, string) (string, string, error)
+	SendSummary(string, *PhaseSummary) error
+	SendVertices(string, []Vertex) error
+	SendMessages(string, []Msg) error
 	// Cleanup()
 }
 
 type MasterRpcClient interface {
 	Init()
-	PushTopology(string, *TopologyInfo) os.Error
-	ExecutePhase(string, *PhaseExec) os.Error
+	PushTopology(string, *TopologyInfo) error
+	ExecutePhase(string, *PhaseExec) error
 	// Cleanup()
 }
 
