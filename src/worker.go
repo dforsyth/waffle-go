@@ -97,6 +97,8 @@ type Worker struct {
 	rpcServ   WorkerRpcServer
 
 	endCh chan *PhaseSummary
+
+	done chan int
 }
 
 func NewWorker(addr, port string) *Worker {
@@ -328,6 +330,8 @@ func step(w *Worker, pe *PhaseExec) error {
 }
 
 func writeResults(w *Worker, pe *PhaseExec) error {
+	// XXX temp kill until i add a shutdown phase
+	defer func() { w.done <- 1 }()
 	if w.resultWriter != nil {
 		return w.resultWriter.WriteResults(w)
 	} else {
@@ -346,11 +350,13 @@ func (w *Worker) Run() {
 	w.vinq = newInVertexQ()
 	w.voutq = newOutVertexQ(w, w.Config.VertexThreshold)
 
-	done := make(chan int)
+	w.done = make(chan int)
 	for {
 		if err := w.discoverMaster(); err != nil {
 			panic(err)
 		}
+		// TODO: There should be a better check here.  Use an error for an unsuccessful registration, 
+		// but err == nil && jobId == "" should be an error.
 		if err := w.register(); err != nil {
 			panic(err)
 		}
@@ -359,5 +365,5 @@ func (w *Worker) Run() {
 		}
 		log.Printf("Job registration unsuccessful.  Trying again.")
 	}
-	<-done
+	<-w.done
 }
