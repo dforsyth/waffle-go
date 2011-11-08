@@ -16,6 +16,7 @@ GOFILES= 	master.go \
 			result.go \
 			persist.go \
 			waffle.go \
-			util/gob_rpc.go
+			util/gob_rpc.go \
+			util/gob_persist.go
 
 include $(GOROOT)/src/Make.pkg

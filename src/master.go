@@ -29,6 +29,7 @@ type MasterConfig struct {
 	HeartbeatTimeout    int64
 	MaxSteps            uint64
 	JobId               string
+	StartStep           uint64
 }
 
 type Master struct {
@@ -303,7 +304,7 @@ func (m *Master) compute() error {
 }
 
 // shutdown workers
-func (m *Master) endWorkers() error {
+func (m *Master) shutdownWorkers() error {
 	/*
 		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
 			panic(e)
@@ -327,11 +328,21 @@ func (m *Master) Run() {
 	m.determinePartitions()
 	m.pushTopology()
 
-	m.executePhase(phaseLOAD1)
-	m.executePhase(phaseLOAD2)
+	if m.Config.StartStep == 0 {
+		m.executePhase(phaseLOAD1)
+		m.executePhase(phaseLOAD2)
+	} else {
+		// This is a restart
+		// Find the last checkpointed step for this job
+		// Check that persisted data exists for that superstep, otherwise go to the next oldest checkpointed step
+		// Tell workers to load data from that checkpoint
+		// Redistribute vertices
+	}
+
 	m.startTime = time.Seconds()
 	m.compute()
 	m.endTime = time.Seconds()
 	m.executePhase(phaseWRITE)
 	log.Printf("computer time was %d", m.endTime-m.startTime)
+	m.shutdownWorkers()
 }

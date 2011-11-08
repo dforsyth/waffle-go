@@ -117,6 +117,14 @@ func (w *Worker) WorkerId() string {
 	return w.workerId
 }
 
+func (w *Worker) Superstep() uint64 {
+	// XXX ehhh, maybe its best to get rid of the alternating step infos...
+	if w.stepInfo == nil {
+		return 0
+	}
+	return w.stepInfo.superstep
+}
+
 func (w *Worker) SetRpcClient(c WorkerRpcClient) {
 	w.rpcClient = c
 }
