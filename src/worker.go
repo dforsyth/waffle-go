@@ -16,6 +16,7 @@ var phaseMap map[int]phaseFn = map[int]phaseFn{
 	phaseSTEPPREPARE: stepPrepare,
 	phaseSUPERSTEP:   step,
 	phaseWRITE:       writeResults,
+	phaseSHUTDOWN:    shutdown,
 }
 
 type phaseStat struct {
@@ -330,13 +331,16 @@ func step(w *Worker, pe *PhaseExec) error {
 }
 
 func writeResults(w *Worker, pe *PhaseExec) error {
-	// XXX temp kill until i add a shutdown phase
-	defer func() { w.done <- 1 }()
 	if w.resultWriter != nil {
 		return w.resultWriter.WriteResults(w)
 	} else {
 		log.Println("worker %s has no resultWriter", w.workerId)
 	}
+	return nil
+}
+
+func shutdown(w *Worker, pe *PhaseExec) error {
+	defer func() { w.done <- 1 }()
 	return nil
 }
 
