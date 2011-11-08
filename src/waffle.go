@@ -12,5 +12,4 @@ const (
 	phaseSTEPPREPARE
 	phaseSUPERSTEP
 	phaseWRITE
-	phaseSHUTDOWN
 )

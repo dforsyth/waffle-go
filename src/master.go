@@ -281,9 +281,7 @@ func (m *Master) executePhase(phaseId int) error {
 	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
 		return err
 	}
-	if m.currPhase != phaseSHUTDOWN {
-		m.barrier(m.barrierCh)
-	}
+	m.barrier(m.barrierCh)
 	return nil
 }
 
@@ -335,6 +333,5 @@ func (m *Master) Run() {
 	m.compute()
 	m.endTime = time.Seconds()
 	m.executePhase(phaseWRITE)
-	log.Printf("compute time was %d", m.endTime-m.startTime)
-	m.executePhase(phaseSHUTDOWN)
+	log.Printf("computer time was %d", m.endTime-m.startTime)
 }
