@@ -56,15 +56,14 @@ type jobStat struct {
 type WorkerConfig struct {
 	MessageThreshold int64
 	VertexThreshold  int64
+	MasterHost       string
+	MasterPort       string
 }
 
 type Worker struct {
 	node
 	workerId string
 	jobId    string
-
-	mhost string
-	mport string
 
 	state int
 
@@ -158,7 +157,7 @@ func (w *Worker) AddCombiner(c Combiner) {
 
 // XXX temp function until theres some sort of discovery mechanism
 func (w *Worker) SetMasterAddress(host, port string) {
-	w.mhost, w.mport = host, port
+	w.Config.MasterHost, w.Config.MasterPort = host, port
 }
 
 func (w *Worker) Partitions() map[uint64]*Partition {
@@ -243,7 +242,7 @@ func (w *Worker) sendSummary(phaseId int) error {
 		ps.NumVerts += p.numVertices()
 	}
 
-	return w.rpcClient.SendSummary(net.JoinHostPort(w.mhost, w.mport), ps)
+	return w.rpcClient.SendSummary(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), ps)
 }
 
 func (w *Worker) discoverMaster() error {
@@ -254,7 +253,7 @@ func (w *Worker) discoverMaster() error {
 // Register step
 func (w *Worker) register() (err error) {
 	log.Println("Trying to register")
-	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.mhost, w.mport), w.Host(), w.Port()); err != nil {
+	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), w.Host(), w.Port()); err != nil {
 		return
 	}
 	log.Printf("Registered as %s for job %s", w.workerId, w.jobId)
