@@ -311,11 +311,13 @@ func step(w *Worker, pe *PhaseExec) error {
 	}
 
 	if checkpoint {
-		if w.persister != nil {
-			return w.persister.Write(w)
-		} else {
-			log.Printf("worker %s has no persister", w.workerId)
-		}
+		/*
+			if w.persister != nil {
+				return w.persister.Write(w)
+			} else {
+				log.Printf("worker %s has no persister", w.workerId)
+			}
+		*/
 	}
 
 	// set the step info fields for superstep and checkpoint

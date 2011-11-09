@@ -32,6 +32,10 @@ type MasterConfig struct {
 	StartStep           uint64
 }
 
+type phaseStatus struct {
+	failedWorkers []string // list of workers that have failed since phase started
+}
+
 type Master struct {
 	node
 
@@ -54,6 +58,8 @@ type Master struct {
 	activeVerts uint64
 	numVertices uint64
 	sentMsgs    uint64
+
+	pStatus phaseStatus
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -283,6 +289,11 @@ func (m *Master) executePhase(phaseId int) error {
 		return err
 	}
 	m.barrier(m.barrierCh)
+
+	// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
+	if len(m.pStatus.failedWorkers) > 0 {
+	}
+
 	return nil
 }
 
