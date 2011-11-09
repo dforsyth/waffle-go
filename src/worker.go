@@ -112,6 +112,8 @@ func NewWorker(addr, port string) *Worker {
 	return w
 }
 
+// Most of this stuff is exposed for persisters
+
 func (w *Worker) WorkerId() string {
 	return w.workerId
 }
@@ -122,6 +124,14 @@ func (w *Worker) Superstep() uint64 {
 		return 0
 	}
 	return w.stepInfo.superstep
+}
+
+func (w *Worker) Partitions() map[uint64]*Partition {
+	return w.partitions
+}
+
+func (w *Worker) IncomingMsgs() map[string][]Msg {
+	return w.inq.in
 }
 
 func (w *Worker) SetRpcClient(c WorkerRpcClient) {
@@ -158,10 +168,6 @@ func (w *Worker) AddCombiner(c Combiner) {
 // XXX temp function until theres some sort of discovery mechanism
 func (w *Worker) SetMasterAddress(host, port string) {
 	w.Config.MasterHost, w.Config.MasterPort = host, port
-}
-
-func (w *Worker) Partitions() map[uint64]*Partition {
-	return w.partitions
 }
 
 // Expose for RPC interface
