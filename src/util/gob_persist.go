@@ -9,8 +9,7 @@ import (
 )
 
 // XXX doesn't check is path exists
-// XXX This doesn't work because the most important fields in my workers are not public (duh?).  Will need to fix
-// that before this Persister becomes useful...
+// This could probably just take an encoder and be generalized?
 
 type GobPersister struct {
 	path string
