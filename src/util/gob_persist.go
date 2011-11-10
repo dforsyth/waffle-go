@@ -39,7 +39,7 @@ func newCheckpointData(partitionId, superstep uint64, vertices []Vertex, inbound
 	}
 }
 
-func (p *GobPersister) Write(partitionId, superstep uint64, vertices []Vertex, inbound []Msg) error {
+func (p *GobPersister) Persist(partitionId, superstep uint64, vertices []Vertex, inbound []Msg) error {
 	directory := path.Join(p.path, strconv.Uitoa64(partitionId))
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
@@ -58,7 +58,7 @@ func (p *GobPersister) Write(partitionId, superstep uint64, vertices []Vertex, i
 	return nil
 }
 
-func (p *GobPersister) Read(partitionId, superstep uint64) ([]Vertex, []Msg, error) {
+func (p *GobPersister) Load(partitionId, superstep uint64) ([]Vertex, []Msg, error) {
 	filePath := path.Join(strconv.Uitoa64(partitionId), strconv.Uitoa64(superstep), strconv.Uitoa64(superstep))
 	f, err := os.Open(filePath)
 	if err != nil {

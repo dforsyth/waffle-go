@@ -315,8 +315,8 @@ func step(w *Worker, pe *PhaseExec) error {
 			verts := make([]Vertex, 0)
 			msgs := make([]Msg, 0)
 			for pid, part := range w.partitions {
-				verts = verts[:]
-				msgs = msgs[:]
+				verts = verts[0:0]
+				msgs = msgs[0:0]
 				for _, vlist := range part.verts {
 					verts = append(verts, vlist)
 				}
@@ -325,7 +325,7 @@ func step(w *Worker, pe *PhaseExec) error {
 						msgs = append(msgs, vmsgs...)
 					}
 				}
-				if err := w.persister.Write(pid, superstep, verts, msgs); err != nil {
+				if err := w.persister.Persist(pid, superstep, verts, msgs); err != nil {
 					return err
 				}
 				log.Printf("Persister %d: %d vertices, %d messages", pid, len(verts), len(msgs))
