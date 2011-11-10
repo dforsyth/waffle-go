@@ -23,6 +23,9 @@ type checkpointData struct {
 }
 
 func NewGobPersister(path string) *GobPersister {
+	if err := os.RemoveAll(path); err != nil {
+		return nil
+	}
 	return &GobPersister{
 		path: path,
 	}
@@ -37,12 +40,12 @@ func newCheckpointData(partitionId, superstep uint64, vertices []Vertex, inbound
 	}
 }
 
-func (p *GobPersister) filePath(partitionId, superstep uint64) string {
-	return path.Join(p.path, strconv.Uitoa64(partitionId), strconv.Uitoa64(superstep))
-}
-
 func (p *GobPersister) Write(partitionId, superstep uint64, vertices []Vertex, inbound []Msg) error {
-	filePath := p.filePath(partitionId, superstep)
+	directory := path.Join(p.path, strconv.Uitoa64(partitionId))
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		return err
+	}
+	filePath := path.Join(directory, strconv.Uitoa64(superstep))
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -56,18 +59,18 @@ func (p *GobPersister) Write(partitionId, superstep uint64, vertices []Vertex, i
 	return nil
 }
 
-func (p *GobPersister) Read(partitionId, superstep uint64) error {
-	filePath := p.filePath(partitionId, superstep)
+func (p *GobPersister) Read(partitionId, superstep uint64) ([]Vertex, []Msg, error) {
+	filePath := path.Join(strconv.Uitoa64(partitionId), strconv.Uitoa64(superstep), strconv.Uitoa64(superstep))
 	f, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer f.Close()
 	dec := gob.NewDecoder(f)
 	data := &checkpointData{}
 	if err := dec.Decode(data); err != nil {
-		return err
+		return nil, nil, err
 	}
 	log.Printf("Decoded from %s", filePath)
-	return nil
+	return data.Vertices, data.Inbound, nil
 }

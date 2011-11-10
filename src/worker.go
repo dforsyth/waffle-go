@@ -311,13 +311,28 @@ func step(w *Worker, pe *PhaseExec) error {
 	}
 
 	if checkpoint {
-		/*
-			if w.persister != nil {
-				return w.persister.Write(w)
-			} else {
-				log.Printf("worker %s has no persister", w.workerId)
+		if w.persister != nil {
+			verts := make([]Vertex, 0)
+			msgs := make([]Msg, 0)
+			for pid, part := range w.partitions {
+				verts = verts[:]
+				msgs = msgs[:]
+				for _, vlist := range part.verts {
+					verts = append(verts, vlist)
+				}
+				for _, v := range verts {
+					if vmsgs := w.msgs.msgs(v.VertexId()); vmsgs != nil {
+						msgs = append(msgs, vmsgs...)
+					}
+				}
+				if err := w.persister.Write(pid, superstep, verts, msgs); err != nil {
+					return err
+				}
+				log.Printf("Persister %d: %d vertices, %d messages", pid, len(verts), len(msgs))
 			}
-		*/
+		} else {
+			log.Printf("worker %s has no persister", w.workerId)
+		}
 	}
 
 	// set the step info fields for superstep and checkpoint
