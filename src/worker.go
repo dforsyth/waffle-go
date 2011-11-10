@@ -318,7 +318,10 @@ func loadPhase3(w *Worker, pe *PhaseExec) error {
 
 // Set the recovered superstep
 func recover(w *Worker, pe *PhaseExec) error {
-	w.lastStepInfo.superstep = pe.Superstep
+	w.stepInfo.superstep = pe.Superstep
+	if w.stepInfo.superstep > 0 {
+		w.lastStepInfo.superstep -= 1
+	}
 	return nil
 }
 
