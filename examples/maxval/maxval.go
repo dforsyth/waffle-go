@@ -142,7 +142,7 @@ func main() {
 	flag.StringVar(&maddr, "maddr", "127.0.0.1:50000", "master address")
 	flag.StringVar(&port, "port", "50000", "node port")
 	flag.StringVar(&host, "host", "127.0.0.1", "node address")
-	flag.Uint64Var(&minWorkers, "minWorkers", 6, "min workers")
+	flag.Uint64Var(&minWorkers, "minWorkers", 2, "min workers")
 	flag.StringVar(&loadpath, "loadpath", "testdata/testdata.txt", "data load path")
 	flag.StringVar(&persistpath, "persistpath", "persist", "data load path")
 

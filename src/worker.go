@@ -13,6 +13,8 @@ type phaseFn func(*Worker, *PhaseExec) error
 var phaseMap map[int]phaseFn = map[int]phaseFn{
 	phaseLOAD1:       loadPhase1,
 	phaseLOAD2:       loadPhase2,
+	phaseLOAD3:       loadPhase3,
+	phaseRECOVER:     recover,
 	phaseSTEPPREPARE: stepPrepare,
 	phaseSUPERSTEP:   step,
 	phaseWRITE:       writeResults,
@@ -291,6 +293,32 @@ func loadPhase2(w *Worker, pe *PhaseExec) error {
 	for _, v := range w.vinq.verts {
 		w.AddVertex(v)
 	}
+	return nil
+}
+
+// load from persistence
+func loadPhase3(w *Worker, pe *PhaseExec) error {
+	superstep := pe.Superstep
+	if w.persister != nil {
+		for _, part := range w.partitions {
+			vertices, inbound, err := w.persister.Load(part.id, superstep)
+			if err != nil {
+				return err
+			}
+			for _, vertex := range vertices {
+				part.addVertex(vertex)
+			}
+			w.inq.addMsgs(inbound)
+		}
+	} else {
+		log.Printf("worker %s has no persister", w.workerId)
+	}
+	return nil
+}
+
+// Set the recovered superstep
+func recover(w *Worker, pe *PhaseExec) error {
+	w.lastStepInfo.superstep = pe.Superstep
 	return nil
 }
 

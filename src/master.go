@@ -36,6 +36,10 @@ type phaseStatus struct {
 	failedWorkers []string // list of workers that have failed since phase started
 }
 
+type jobInfo struct {
+	lastCheckpoint uint64
+}
+
 type Master struct {
 	node
 
@@ -47,6 +51,8 @@ type Master struct {
 	superstep uint64
 	startTime int64
 	endTime   int64
+
+	jInfo jobInfo
 
 	wInfo map[string]*workerInfo
 
@@ -87,6 +93,10 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 			// handle error
 		}
 		m.collectSummaryInfo(ps)
+		// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
+		if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
+			m.jInfo.lastCheckpoint = m.superstep
+		}
 		bmap[ps.WorkerId] = nil
 		if len(bmap) == len(m.workerMap) {
 			return
@@ -348,6 +358,16 @@ func (m *Master) Run() {
 		// Check that persisted data exists for that superstep, otherwise go to the next oldest checkpointed step
 		// Tell workers to load data from that checkpoint
 		// Redistribute vertices
+
+		// rollback to the last checkpointed superstep
+		m.superstep = m.jInfo.lastCheckpoint
+		// load vertices from persistence
+		m.executePhase(phaseLOAD3)
+		// redistribute verts? (I think this is actually useless...)
+		m.executePhase(phaseLOAD2)
+		// set the superstep on workers
+		m.executePhase(phaseRECOVER)
+		// we should be ready to go now
 	}
 
 	m.startTime = time.Seconds()

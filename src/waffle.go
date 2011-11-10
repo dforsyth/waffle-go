@@ -9,7 +9,9 @@ const (
 	phaseREGISTER = iota
 	phaseLOAD1
 	phaseLOAD2
+	phaseLOAD3 // load from persistence
 	phaseSTEPPREPARE
 	phaseSUPERSTEP
 	phaseWRITE
+	phaseRECOVER
 )
