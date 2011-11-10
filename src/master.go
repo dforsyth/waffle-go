@@ -354,6 +354,6 @@ func (m *Master) Run() {
 	m.compute()
 	m.endTime = time.Seconds()
 	m.executePhase(phaseWRITE)
-	log.Printf("computer time was %d", m.endTime-m.startTime)
+	log.Printf("compute time was %d", m.endTime-m.startTime)
 	m.shutdownWorkers()
 }
