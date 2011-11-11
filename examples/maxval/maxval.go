@@ -156,7 +156,7 @@ func main() {
 
 		m.Config.JobId = "maxval-" + time.UTC().String()
 		m.Config.MinWorkers = minWorkers
-		m.Config.PartitionsPerWorker = 1
+		m.Config.MinPartitionsPerWorker = 1
 
 		m.SetRpcClient(new(waffle.GobMasterRpcClient))
 		m.SetRpcServer(new(waffle.GobMasterRpcServer))

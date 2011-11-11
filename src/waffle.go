@@ -15,3 +15,6 @@ const (
 	phaseWRITE
 	phaseRECOVER
 )
+
+type RecoverableError error
+type RegistrationTimeoutError error

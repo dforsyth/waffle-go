@@ -22,14 +22,14 @@ func newWorkerInfo() *workerInfo {
 }
 
 type MasterConfig struct {
-	MinWorkers          uint64
-	RegisterWait        int64
-	PartitionsPerWorker uint64
-	HeartbeatInterval   int64
-	HeartbeatTimeout    int64
-	MaxSteps            uint64
-	JobId               string
-	StartStep           uint64
+	MinWorkers             uint64
+	RegisterWait           int64
+	MinPartitionsPerWorker uint64
+	HeartbeatInterval      int64
+	HeartbeatTimeout       int64
+	MaxSteps               uint64
+	JobId                  string
+	StartStep              uint64
 }
 
 type phaseStatus struct {
@@ -90,7 +90,21 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 		}
 
 		if ps.Error != nil {
-			// handle error
+			/*
+				// handle error
+				if ps.Error.(*RecoverableError) {
+					// go into recover state
+					m.state = RECOVER
+					m.recover.addError(ps.WorkerId, ps.Error)
+					return
+				} else {
+					log.Printf("unrecoverable error: %v", ps.Error)
+					// send shutdown instruction to all worker
+					m.state = FAILURE
+					m.sendToAllWorkers(m.newPhaseExec(phaseFAILURE))
+				}
+			*/
+			panic(ps.Error)
 		}
 		m.collectSummaryInfo(ps)
 		// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
@@ -240,10 +254,12 @@ func (m *Master) determinePartitions() {
 	log.Printf("Designating partitions")
 
 	m.partitionMap = make(map[uint64]string)
-	p := 0
-	for _, id := range m.workerMap {
-		for i := 0; i < int(m.Config.PartitionsPerWorker); i, p = i+1, p+1 {
-			m.partitionMap[uint64(p)] = id
+	// XXX a better set of server configurations would allow us to set min partitions per worker.
+	// They could send this information at registration time.
+	for i, p := 0, 0; i < int(m.Config.MinPartitionsPerWorker); i++ {
+		for _, workerId := range m.workerMap {
+			m.partitionMap[uint64(p)] = workerId
+			p++
 		}
 	}
 
@@ -302,6 +318,23 @@ func (m *Master) executePhase(phaseId int) error {
 
 	// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
 	if len(m.pStatus.failedWorkers) > 0 {
+		for _, wid := range m.pStatus.failedWorkers {
+			delete(m.workerMap, wid)
+		}
+		// register new workers, use recover timeout
+		if err := m.registerWorkers(); err != nil {
+			/*
+				// XXX we actually want to die gracefully, but until then just panic
+				if toErr, ok := err.(*RegistrationTimeoutError); ok {
+					log.Printf("registration timeout error, storing information")
+					panic(toErr)
+				} else {
+					panic(err)
+				}
+			*/
+			panic(err)
+		}
+		m.determinePartitions()
 	}
 
 	return nil
