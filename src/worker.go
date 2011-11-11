@@ -60,6 +60,7 @@ type WorkerConfig struct {
 	VertexThreshold  int64
 	MasterHost       string
 	MasterPort       string
+	RegisterRetry    uint64
 }
 
 type Worker struct {
@@ -412,7 +413,7 @@ func (w *Worker) Run() {
 	w.voutq = newOutVertexQ(w, w.Config.VertexThreshold)
 
 	w.done = make(chan int)
-	for {
+	for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
 		if err := w.discoverMaster(); err != nil {
 			panic(err)
 		}
@@ -425,6 +426,10 @@ func (w *Worker) Run() {
 			break
 		}
 		log.Printf("Job registration unsuccessful.  Trying again.")
+	}
+	if w.jobId == "" {
+		log.Println("Failed to register for job, shutting down.")
+		w.done <- 1
 	}
 	<-w.done
 }
