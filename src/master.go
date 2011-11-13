@@ -40,19 +40,31 @@ type jobInfo struct {
 	lastCheckpoint uint64
 }
 
+type recoveryInfo struct {
+	errors []error
+}
+
+func (r *recoveryInfo) addError(wid string, err *RecoverableError) {
+	if r.errors == nil {
+		r.errors = make([]error, 0)
+	}
+	r.errors = append(r.errors, err)
+}
+
 type Master struct {
 	node
 
-	Config MasterConfig
+	Config       MasterConfig
+	recoveryInfo recoveryInfo
+	jobInfo      jobInfo
 
+	state     int
 	currPhase int
 	regch     chan byte
 	barrierCh chan *PhaseSummary
 	superstep uint64
 	startTime int64
 	endTime   int64
-
-	jInfo jobInfo
 
 	wInfo map[string]*workerInfo
 
@@ -90,31 +102,28 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 		}
 
 		if ps.Error != nil {
-			/*
-				// handle error
-				if ps.Error.(*RecoverableError) {
-					// go into recover state
-					m.state = RECOVER
-					m.recover.addError(ps.WorkerId, ps.Error)
-					return
-				} else {
-					log.Printf("unrecoverable error: %v", ps.Error)
-					// send shutdown instruction to all worker
-					m.state = FAILURE
-					m.sendToAllWorkers(m.newPhaseExec(phaseFAILURE))
-				}
-			*/
-			panic(ps.Error)
-		}
-		m.collectSummaryInfo(ps)
-		// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
-		if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
-			m.jInfo.lastCheckpoint = m.superstep
+			m.handlePhaseError(ps)
+		} else {
+			m.collectSummaryInfo(ps)
 		}
 		bmap[ps.WorkerId] = nil
 		if len(bmap) == len(m.workerMap) {
 			return
 		}
+	}
+}
+
+func (m *Master) handlePhaseError(ps *PhaseSummary) {
+	if err, ok := ps.Error.(*RecoverableError); ok {
+		// log the recoverable error
+		log.Printf("worker %s, recoverable error: %v", ps.WorkerId, err)
+		// add the error to recovery info and set the state to RECOVER (might not be needed, we can just check the recovery struct for errors?)
+		m.recoveryInfo.addError(ps.WorkerId, err)
+		m.state = RECOVER
+	} else {
+		log.Println("worker %s, unrecoverable error: %v", ps.WorkerId, ps.Error)
+		panic(ps.Error) // XXX Should actually be sending some kind of shutdown directive
+		m.state = FAILURE
 	}
 }
 
@@ -318,12 +327,27 @@ func (m *Master) executePhase(phaseId int) error {
 
 	// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
 	if len(m.pStatus.failedWorkers) > 0 {
-		for _, wid := range m.pStatus.failedWorkers {
-			delete(m.workerMap, wid)
+		if err := m.handleFailedWorkers(m.pStatus.failedWorkers); err != nil {
+			panic(err)
 		}
+	} else {
+		// XXX Move this
+		// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
+		if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
+			m.jobInfo.lastCheckpoint = m.superstep
+		}
+	}
+	return nil
+}
+
+func (m *Master) handleFailedWorkers(failedWorkers []string) error {
+	for _, wid := range m.pStatus.failedWorkers {
+		delete(m.workerMap, wid)
+	}
+	/*
 		// register new workers, use recover timeout
-		if err := m.registerWorkers(); err != nil {
-			/*
+		if m.Config.WaitForNewWorkers {
+			if err := m.registerWorkers(); err != nil {
 				// XXX we actually want to die gracefully, but until then just panic
 				if toErr, ok := err.(*RegistrationTimeoutError); ok {
 					log.Printf("registration timeout error, storing information")
@@ -331,12 +355,38 @@ func (m *Master) executePhase(phaseId int) error {
 				} else {
 					panic(err)
 				}
-			*/
-			panic(err)
+				panic(err)
+			}
 		}
-		m.determinePartitions()
+	*/
+	if len(m.workerMap) == 0 {
+		return errors.New("no workers left")
 	}
+	// Move the failed worker partitions to other workers
+	for _, wid := range m.pStatus.failedWorkers {
+		if err := m.movePartitions(wid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
+// Move partitions of wid to another worker
+func (m *Master) movePartitions(moveId string) error {
+	// XXX for now, we just move the partitions for dead nodes to the first worker we get on map iteration.  Make this intelligent later.
+	// Have this function return error so that we can fail if there is some kind of assignment overflow in the future heuristic
+	var newOwner string
+	for id := range m.workerMap {
+		if id != moveId {
+			newOwner = id
+			break
+		}
+	}
+	for pid, wid := range m.partitionMap {
+		if wid == moveId {
+			m.partitionMap[pid] = newOwner
+		}
+	}
 	return nil
 }
 
@@ -393,7 +443,7 @@ func (m *Master) Run() {
 		// Redistribute vertices
 
 		// rollback to the last checkpointed superstep
-		m.superstep = m.jInfo.lastCheckpoint
+		m.superstep = m.Config.StartStep
 		// load vertices from persistence
 		m.executePhase(phaseLOAD3)
 		// redistribute verts? (I think this is actually useless...)

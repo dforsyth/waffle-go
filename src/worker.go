@@ -39,10 +39,6 @@ func (s *phaseStat) end() {
 	s.endTime = time.Seconds()
 }
 
-func (s *phaseStat) addError(err error) {
-	// pass
-}
-
 type stepInfo struct {
 	activeVertices uint64
 	numVertices    uint64
@@ -254,11 +250,6 @@ func (w *Worker) sendSummary(phaseId int) error {
 	return w.rpcClient.SendSummary(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), ps)
 }
 
-func (w *Worker) discoverMaster() error {
-	// TODO Discover master
-	return nil
-}
-
 // Register step
 func (w *Worker) register() (err error) {
 	log.Println("Trying to register")
@@ -320,6 +311,7 @@ func loadPhase3(w *Worker, pe *PhaseExec) error {
 // Set the recovered superstep
 func recover(w *Worker, pe *PhaseExec) error {
 	w.stepInfo.superstep = pe.Superstep
+	// to get through the increment check in step()
 	if w.stepInfo.superstep > 0 {
 		w.lastStepInfo.superstep -= 1
 	}
@@ -402,6 +394,10 @@ func writeResults(w *Worker, pe *PhaseExec) error {
 	return nil
 }
 
+func (w *Worker) shutdown() {
+	return
+}
+
 func (w *Worker) Run() {
 	w.rpcClient.Init()
 	w.rpcServ.Start(w)
@@ -414,9 +410,6 @@ func (w *Worker) Run() {
 
 	w.done = make(chan int)
 	for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
-		if err := w.discoverMaster(); err != nil {
-			panic(err)
-		}
 		// TODO: There should be a better check here.  Use an error for an unsuccessful registration, 
 		// but err == nil && jobId == "" should be an error.
 		if err := w.register(); err != nil {
@@ -432,4 +425,5 @@ func (w *Worker) Run() {
 		w.done <- 1
 	}
 	<-w.done
+	w.shutdown()
 }

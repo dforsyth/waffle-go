@@ -112,7 +112,7 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 }
 
 // Do work
-func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
+func (v *MaxValueVertex) Compute(msgs []waffle.Msg) (err error) {
 	max := 0
 	for _, msg := range msgs {
 		val := msg.(*MaxValueMsg).Value
@@ -130,6 +130,7 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 		}
 	}
 	v.VoteToHalt()
+	return
 }
 
 var master bool

@@ -14,7 +14,29 @@ const (
 	phaseSUPERSTEP
 	phaseWRITE
 	phaseRECOVER
+	phaseFAILURE
 )
 
-type RecoverableError error
-type RegistrationTimeoutError error
+const (
+	START = iota
+	WORKING
+	FAILURE
+	RECOVER
+	SHUTDOWN
+)
+
+type RecoverableError struct {
+	message string
+}
+
+func (e *RecoverableError) Error() string {
+	return e.message
+}
+
+type RegistrationTimeoutError struct {
+	message string
+}
+
+func (e *RegistrationTimeoutError) Error() string {
+	return e.message
+}
