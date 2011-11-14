@@ -239,12 +239,10 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
 	m.workerMap[workerId] = net.JoinHostPort(addr, port)
 	m.wInfo[workerId] = newWorkerInfo()
 
-	jobId := m.Config.JobId
-
-	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, jobId)
+	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, m.Config.JobId)
 	go m.ekg(workerId)
 
-	return workerId, jobId, nil
+	return workerId, m.Config.JobId, nil
 }
 
 func (m *Master) registerWorkers() error {
