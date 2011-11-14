@@ -39,6 +39,10 @@ type phaseStatus struct {
 type jobInfo struct {
 	canRegister    bool
 	lastCheckpoint uint64
+	activeVerts    uint64
+	numVerts       uint64
+	sentMsgs       uint64
+	totalSentMsgs  uint64
 }
 
 type recoveryInfo struct {
@@ -72,12 +76,8 @@ type Master struct {
 	checkpointFn func(uint64) bool
 
 	// job stats
-	mPhaseInfo  sync.RWMutex
-	activeVerts uint64
-	numVertices uint64
-	sentMsgs    uint64
-
-	pStatus phaseStatus
+	mPhaseInfo sync.RWMutex
+	pStatus    phaseStatus
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -156,18 +156,19 @@ func (m *Master) resetJobInfo() {
 	// this doesnt even really need the locking -- it shouldnt happen while a barrier is accepting workers
 	log.Println("resetting job info")
 	m.mPhaseInfo.Lock()
-	m.activeVerts = 0
-	m.sentMsgs = 0
-	m.numVertices = 0
+	m.jobInfo.activeVerts = 0
+	m.jobInfo.sentMsgs = 0
+	m.jobInfo.numVerts = 0
 	m.mPhaseInfo.Unlock()
 }
 
 // Update the stats from the current step
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
 	m.mPhaseInfo.Lock()
-	m.activeVerts += ps.ActiveVerts
-	m.numVertices += ps.NumVerts
-	m.sentMsgs += ps.SentMsgs
+	m.jobInfo.activeVerts += ps.ActiveVerts
+	m.jobInfo.numVerts += ps.NumVerts
+	m.jobInfo.sentMsgs += ps.SentMsgs
+	m.jobInfo.totalSentMsgs += m.jobInfo.sentMsgs
 	m.mPhaseInfo.Unlock()
 }
 
@@ -316,7 +317,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 		PhaseId:    phaseId,
 		JobId:      m.Config.JobId,
 		Superstep:  m.superstep,
-		NumVerts:   m.numVertices,
+		NumVerts:   m.jobInfo.numVerts,
 		Checkpoint: m.checkpointFn(m.superstep),
 	}
 }
@@ -400,8 +401,8 @@ func (m *Master) movePartitions(moveId string) error {
 func (m *Master) compute() error {
 	log.Printf("Starting computation")
 
-	log.Printf("Active verts = %d", m.activeVerts)
-	for m.superstep = 0; m.activeVerts > 0 || m.sentMsgs > 0; m.superstep++ {
+	log.Printf("Active verts = %d", m.jobInfo.activeVerts)
+	for m.superstep = 0; m.jobInfo.activeVerts > 0 || m.jobInfo.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		log.Printf("preparing for superstep %d", m.superstep)
 		m.executePhase(phaseSTEPPREPARE)
