@@ -173,10 +173,12 @@ func (w *Worker) SetMasterAddress(host, port string) {
 func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint64]string) {
 	w.workerMap = workerMap
 	w.partitionMap = partitionMap
+	log.Printf("topology set")
 
 	for pid, wid := range w.partitionMap {
 		if wid == w.workerId {
 			w.partitions[pid] = NewPartition(pid, w)
+			log.Printf("create partitions %d on %s", pid, wid)
 		}
 	}
 }
