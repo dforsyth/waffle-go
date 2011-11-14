@@ -59,7 +59,6 @@ type Master struct {
 	recoveryInfo recoveryInfo
 	jobInfo      jobInfo
 
-	state     int
 	currPhase int
 	regch     chan byte
 	barrierCh chan *PhaseSummary
@@ -120,11 +119,9 @@ func (m *Master) handlePhaseError(ps *PhaseSummary) {
 		log.Printf("worker %s, recoverable error: %v", ps.WorkerId, err)
 		// add the error to recovery info and set the state to RECOVER (might not be needed, we can just check the recovery struct for errors?)
 		m.recoveryInfo.addError(ps.WorkerId, err)
-		m.state = RECOVER
 	} else {
 		log.Println("worker %s, unrecoverable error: %v", ps.WorkerId, ps.Error)
 		panic(ps.Error) // XXX Should actually be sending some kind of shutdown directive
-		m.state = FAILURE
 	}
 }
 
@@ -334,6 +331,7 @@ func (m *Master) executePhase(phaseId int) error {
 
 	// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
 	if len(m.pStatus.failedWorkers) > 0 {
+		log.Printf("detected %d failed workers", len(m.pStatus.failedWorkers))
 		if err := m.handleFailedWorkers(m.pStatus.failedWorkers); err != nil {
 			panic(err)
 		}
@@ -391,6 +389,7 @@ func (m *Master) movePartitions(moveId string) error {
 	}
 	for pid, wid := range m.partitionMap {
 		if wid == moveId {
+			log.Printf("moving partition %d from %s to %s", pid, moveId, newOwner)
 			m.partitionMap[pid] = newOwner
 		}
 	}

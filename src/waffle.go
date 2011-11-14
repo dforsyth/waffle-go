@@ -17,14 +17,6 @@ const (
 	phaseFAILURE
 )
 
-const (
-	START = iota
-	WORKING
-	FAILURE
-	RECOVER
-	SHUTDOWN
-)
-
 type RecoverableError struct {
 	message string
 }
