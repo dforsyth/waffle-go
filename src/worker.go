@@ -164,11 +164,6 @@ func (w *Worker) AddCombiner(c Combiner) {
 	w.combiners = append(w.combiners, c)
 }
 
-// XXX temp function until theres some sort of discovery mechanism
-func (w *Worker) SetMasterAddress(host, port string) {
-	w.Config.MasterHost, w.Config.MasterPort = host, port
-}
-
 // Expose for RPC interface
 func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint64]string) {
 	w.workerMap = workerMap
