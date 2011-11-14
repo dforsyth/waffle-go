@@ -153,13 +153,10 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 
 // Zero out the stats from the last step
 func (m *Master) resetJobInfo() {
-	// this doesnt even really need the locking -- it shouldnt happen while a barrier is accepting workers
 	log.Println("resetting job info")
-	m.mPhaseInfo.Lock()
 	m.jobInfo.activeVerts = 0
 	m.jobInfo.sentMsgs = 0
 	m.jobInfo.numVerts = 0
-	m.mPhaseInfo.Unlock()
 }
 
 // Update the stats from the current step
@@ -204,7 +201,7 @@ func (m *Master) ekg(id string) {
 				if call.Error != nil {
 					panic(call.Error)
 				}
-			case <-time.After(m.config.heartbeatTimeout):
+			case <-time.After(m.Config.HeartbeatTimeout):
 				// handle fault
 			}
 
@@ -212,7 +209,7 @@ func (m *Master) ekg(id string) {
 			select {
 			case <-info.ekgch:
 				return
-			case <-time.Tick(m.config.heartbeatInterval):
+			case <-time.Tick(m.Config.HeartbeatInterval):
 				// resetTimeout
 			}
 		}
