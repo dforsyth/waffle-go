@@ -173,7 +173,7 @@ func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint6
 	for pid, wid := range w.partitionMap {
 		if wid == w.workerId {
 			w.partitions[pid] = NewPartition(pid, w)
-			log.Printf("create partitions %d on %s", pid, wid)
+			log.Printf("created partition %d on %s", pid, wid)
 		}
 	}
 }
