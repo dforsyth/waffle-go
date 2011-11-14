@@ -37,6 +37,7 @@ type phaseStatus struct {
 }
 
 type jobInfo struct {
+	canRegister    bool
 	lastCheckpoint uint64
 }
 
@@ -224,6 +225,11 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
 	<-m.regch
 	defer func() { m.regch <- 1 }()
 
+	if !m.jobInfo.canRegister {
+		// cant register, get out
+		return "", "", nil
+	}
+
 	log.Printf("Attempting to register %s:%s", addr, port)
 
 	workerId := m.widFn(addr, port)
@@ -247,9 +253,12 @@ func (m *Master) registerWorkers() error {
 	m.workerMap = make(map[string]string)
 
 	// Should do this in a more Go-ish way, maybe with a select statement?
-	for timer := 0; uint64(len(m.workerMap)) < m.Config.MinWorkers || int64(timer) < m.Config.RegisterWait; timer += 1 * 1e9 {
+	m.jobInfo.canRegister = true
+	for timer := 0; (m.Config.MinWorkers > 0 && uint64(len(m.workerMap)) < m.Config.MinWorkers) ||
+		(m.Config.RegisterWait > 0 && int64(timer) < m.Config.RegisterWait); timer += 1 * 1e9 {
 		<-time.After(1 * 1e9)
 	}
+	m.jobInfo.canRegister = false
 
 	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
 		return errors.New("Not enough workers registered")
