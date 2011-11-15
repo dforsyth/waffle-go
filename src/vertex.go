@@ -3,7 +3,7 @@ package waffle
 type Vertex interface {
 	VertexId() string
 	SetVertexId(string)
-	Compute([]Msg) error
+	Compute([]Msg)
 	AddOutEdgeTo(string, Edge)
 	AddOutEdge(Edge)
 	OutEdges() []Edge
