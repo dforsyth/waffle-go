@@ -158,8 +158,8 @@ func main() {
 		m.Config.MinWorkers = minWorkers
 		m.Config.MinPartitionsPerWorker = 1
 
-		m.SetRpcClient(new(waffle.GobMasterRpcClient))
-		m.SetRpcServer(new(waffle.GobMasterRpcServer))
+		m.SetRpcClient(waffle.NewGobMasterRPCClient())
+		m.SetRpcServer(waffle.NewGobMasterRPCServer())
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
 			return false
 		})
@@ -171,8 +171,8 @@ func main() {
 
 		w.Config.MasterHost, w.Config.MasterPort, _ = net.SplitHostPort(maddr)
 
-		w.SetRpcClient(new(waffle.GobWorkerRpcClient))
-		w.SetRpcServer(new(waffle.GobWorkerRpcServer))
+		w.SetRpcClient(waffle.NewGobWorkerRPCClient())
+		w.SetRpcServer(waffle.NewGobWorkerRPCServer())
 		w.SetLoader(&MaxValueLoader{path: loadpath})
 		w.SetPersister(waffle.NewGobPersister(persistpath))
 		w.SetResultWriter(&MaxValueResultWriter{})

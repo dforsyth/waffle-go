@@ -16,12 +16,12 @@ const (
 )
 
 // GobRpc will ship with the base distribution
-type GobRpcClientBase struct {
+type GobRPCClientBase struct {
 	lock          sync.Mutex
 	workerClients map[string]*rpc.Client
 }
 
-func (c *GobRpcClientBase) init() {
+func (c *GobRPCClientBase) init() {
 	c.workerClients = make(map[string]*rpc.Client)
 
 	// Register the base types with gob
@@ -30,16 +30,17 @@ func (c *GobRpcClientBase) init() {
 	gob.Register(&MsgBase{})
 }
 
-type GobMasterRpcClient struct {
-	GobRpcClientBase
+type GobMasterRPCClient struct {
+	GobRPCClientBase
 }
 
-func (s *GobMasterRpcClient) Init() {
-	// For ClientBase
-	s.GobRpcClientBase.init()
+func NewGobMasterRPCClient() *GobMasterRPCClient {
+	c := &GobMasterRPCClient{}
+	c.init()
+	return c
 }
 
-func (c *GobMasterRpcClient) workerClient(workerAddr string) (*rpc.Client, error) {
+func (c *GobMasterRPCClient) workerClient(workerAddr string) (*rpc.Client, error) {
 	c.lock.Lock()
 	if _, ok := c.workerClients[workerAddr]; !ok {
 		cl, err := rpc.DialHTTP("tcp", workerAddr)
@@ -53,41 +54,42 @@ func (c *GobMasterRpcClient) workerClient(workerAddr string) (*rpc.Client, error
 	return client, nil
 }
 
-func (s *GobMasterRpcClient) PushTopology(workerAddr string, info *TopologyInfo) error {
+func (s *GobMasterRPCClient) PushTopology(workerAddr string, info *TopologyInfo) error {
 	client, err := s.workerClient(workerAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err = client.Call("GobWorkerRpcServer.RecieveTopology", info, &resp); err != nil {
+	if err = client.Call("GobWorkerRPCServer.RecieveTopology", info, &resp); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *GobMasterRpcClient) ExecutePhase(workerAddr string, exec *PhaseExec) error {
+func (s *GobMasterRPCClient) ExecutePhase(workerAddr string, exec *PhaseExec) error {
 	client, err := s.workerClient(workerAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err = client.Call("GobWorkerRpcServer.ExecPhase", exec, &resp); err != nil {
+	if err = client.Call("GobWorkerRPCServer.ExecPhase", exec, &resp); err != nil {
 		return err
 	}
 	return nil
 }
 
-type GobWorkerRpcClient struct {
-	GobRpcClientBase
+type GobWorkerRPCClient struct {
+	GobRPCClientBase
 	mclient *rpc.Client
 }
 
-func (c *GobWorkerRpcClient) Init() {
-	// For ClientBase
-	c.GobRpcClientBase.init()
+func NewGobWorkerRPCClient() *GobWorkerRPCClient {
+	c := &GobWorkerRPCClient{}
+	c.init()
+	return c
 }
 
-func (c *GobWorkerRpcClient) workerClient(workerAddr string) (*rpc.Client, error) {
+func (c *GobWorkerRPCClient) workerClient(workerAddr string) (*rpc.Client, error) {
 	// TODO avoid lock contention, clean up the node interface so we can access wmap cleanly
 	c.lock.Lock()
 	if _, ok := c.workerClients[workerAddr]; !ok {
@@ -102,7 +104,7 @@ func (c *GobWorkerRpcClient) workerClient(workerAddr string) (*rpc.Client, error
 	return client, nil
 }
 
-func (c *GobWorkerRpcClient) masterClient(masterAddr string) (*rpc.Client, error) {
+func (c *GobWorkerRPCClient) masterClient(masterAddr string) (*rpc.Client, error) {
 	if c.mclient == nil {
 		client, err := rpc.DialHTTP("tcp", masterAddr)
 		if err != nil {
@@ -113,59 +115,63 @@ func (c *GobWorkerRpcClient) masterClient(masterAddr string) (*rpc.Client, error
 	return c.mclient, nil
 }
 
-func (c *GobWorkerRpcClient) Register(masterAddr, host, port string) (string, string, error) {
+func (c *GobWorkerRPCClient) Register(masterAddr, host, port string) (string, string, error) {
 	mclient, err := c.masterClient(masterAddr)
 	if err != nil {
 		return "", "", err
 	}
 	var resp RegisterResp
-	if err = mclient.Call("GobMasterRpcServer.RegisterWorker", &RegisterInfo{Addr: host, Port: port}, &resp); err != nil {
+	if err = mclient.Call("GobMasterRPCServer.RegisterWorker", &RegisterInfo{Addr: host, Port: port}, &resp); err != nil {
 		return "", "", err
 	}
 	return resp.WorkerId, resp.JobId, nil
 }
 
-func (c *GobWorkerRpcClient) SendSummary(masterAddr string, summary *PhaseSummary) error {
+func (c *GobWorkerRPCClient) SendSummary(masterAddr string, summary *PhaseSummary) error {
 	mclient, err := c.masterClient(masterAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err := mclient.Call("GobMasterRpcServer.EnterPhaseBarrier", summary, &resp); err != nil {
+	if err := mclient.Call("GobMasterRPCServer.EnterPhaseBarrier", summary, &resp); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *GobWorkerRpcClient) SendVertices(workerAddr string, vertices []Vertex) error {
+func (c *GobWorkerRPCClient) SendVertices(workerAddr string, vertices []Vertex) error {
 	client, err := c.workerClient(workerAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err = client.Call("GobWorkerRpcServer.QueueVertices", vertices, &resp); err != nil {
+	if err = client.Call("GobWorkerRPCServer.QueueVertices", vertices, &resp); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *GobWorkerRpcClient) SendMessages(workerAddr string, msgs []Msg) error {
+func (c *GobWorkerRPCClient) SendMessages(workerAddr string, msgs []Msg) error {
 	client, err := c.workerClient(workerAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err = client.Call("GobWorkerRpcServer.QueueMessages", msgs, &resp); err != nil {
+	if err = client.Call("GobWorkerRPCServer.QueueMessages", msgs, &resp); err != nil {
 		return err
 	}
 	return nil
 }
 
-type GobMasterRpcServer struct {
+type GobMasterRPCServer struct {
 	master *Master
 }
 
-func (s *GobMasterRpcServer) Start(master *Master) {
+func NewGobMasterRPCServer() *GobMasterRPCServer {
+	return &GobMasterRPCServer{}
+}
+
+func (s *GobMasterRPCServer) Start(master *Master) {
 	s.master = master
 	rpc.Register(s)
 	rpc.HandleHTTP()
@@ -176,7 +182,7 @@ func (s *GobMasterRpcServer) Start(master *Master) {
 	go http.Serve(listener, nil)
 }
 
-func (s *GobMasterRpcServer) RegisterWorker(info *RegisterInfo, resp *RegisterResp) error {
+func (s *GobMasterRPCServer) RegisterWorker(info *RegisterInfo, resp *RegisterResp) error {
 	workerId, jobId, err := s.master.RegisterWorker(info.Addr, info.Port)
 	if err != nil {
 		return err
@@ -185,13 +191,21 @@ func (s *GobMasterRpcServer) RegisterWorker(info *RegisterInfo, resp *RegisterRe
 	return nil
 }
 
-func (s *GobMasterRpcServer) EnterPhaseBarrier(summary *PhaseSummary, resp *Resp) error {
+func (s *GobMasterRPCServer) EnterPhaseBarrier(summary *PhaseSummary, resp *Resp) error {
 	*resp = OK
 	s.master.EnterBarrier(summary)
 	return nil
 }
 
-func (s *GobWorkerRpcServer) Start(worker *Worker) {
+type GobWorkerRPCServer struct {
+	worker *Worker
+}
+
+func NewGobWorkerRPCServer() *GobWorkerRPCServer {
+	return &GobWorkerRPCServer{}
+}
+
+func (s *GobWorkerRPCServer) Start(worker *Worker) {
 	s.worker = worker
 	rpc.Register(s)
 	rpc.HandleHTTP()
@@ -202,28 +216,24 @@ func (s *GobWorkerRpcServer) Start(worker *Worker) {
 	go http.Serve(listener, nil)
 }
 
-type GobWorkerRpcServer struct {
-	worker *Worker
-}
-
-func (s *GobWorkerRpcServer) ExecPhase(exec *PhaseExec, resp *Resp) error {
+func (s *GobWorkerRPCServer) ExecPhase(exec *PhaseExec, resp *Resp) error {
 	*resp = OK
 	return s.worker.ExecPhase(exec)
 }
 
-func (s *GobWorkerRpcServer) RecieveTopology(info *TopologyInfo, resp *Resp) error {
+func (s *GobWorkerRPCServer) RecieveTopology(info *TopologyInfo, resp *Resp) error {
 	*resp = OK
 	s.worker.SetTopology(info.WorkerMap, info.PartitionMap)
 	return nil
 }
 
-func (s *GobWorkerRpcServer) QueueMessages(msgs []Msg, resp *Resp) error {
+func (s *GobWorkerRPCServer) QueueMessages(msgs []Msg, resp *Resp) error {
 	*resp = OK
 	s.worker.QueueMessages(msgs)
 	return nil
 }
 
-func (s *GobWorkerRpcServer) QueueVertices(vertices []Vertex, resp *Resp) error {
+func (s *GobWorkerRPCServer) QueueVertices(vertices []Vertex, resp *Resp) error {
 	*resp = OK
 	s.worker.QueueVertices(vertices)
 	return nil

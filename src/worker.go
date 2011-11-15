@@ -396,7 +396,6 @@ func (w *Worker) shutdown() {
 }
 
 func (w *Worker) Run() {
-	w.rpcClient.Init()
 	w.rpcServ.Start(w)
 
 	w.msgs = newInMsgQ()

@@ -180,7 +180,6 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 // Init RPC
 func (m *Master) startRPC() error {
 	m.rpcServ.Start(m)
-	m.rpcClient.Init()
 	return nil
 }
 
