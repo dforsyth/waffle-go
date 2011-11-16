@@ -154,7 +154,7 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 }
 
 // Zero out the stats from the last step
-func (m *Master) resetJobInfo() {
+func (m *Master) resetPhaseInfo() {
 	log.Println("resetting job info")
 	m.jobInfo.activeVerts = 0
 	m.jobInfo.sentMsgs = 0
@@ -163,6 +163,7 @@ func (m *Master) resetJobInfo() {
 
 // Update the stats from the current step
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
+	// These locks aren't needed since this function is only called in the serial barrier loop
 	m.mPhaseInfo.Lock()
 	m.jobInfo.activeVerts += ps.ActiveVerts
 	m.jobInfo.numVerts += ps.NumVerts
@@ -322,7 +323,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 
 func (m *Master) executePhase(phaseId int) error {
 	m.currPhase = phaseId
-	m.resetJobInfo()
+	m.resetPhaseInfo()
 	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
 		return err
 	}
