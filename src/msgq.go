@@ -21,20 +21,20 @@ func newInMsgQ() *InMsgQ {
 func (q *InMsgQ) addMsg(msg Msg) {
 	q.m.Lock()
 	defer q.m.Unlock()
-	if _, ok := q.in[msg.DestVertId()]; !ok {
-		q.in[msg.DestVertId()] = make([]Msg, 0)
+	if _, ok := q.in[msg.Target()]; !ok {
+		q.in[msg.Target()] = make([]Msg, 0)
 	}
-	q.in[msg.DestVertId()] = append(q.in[msg.DestVertId()], msg)
+	q.in[msg.Target()] = append(q.in[msg.Target()], msg)
 }
 
 func (q *InMsgQ) addMsgs(msgs []Msg) {
 	q.m.Lock()
 	defer q.m.Unlock()
 	for _, msg := range msgs {
-		if _, ok := q.in[msg.DestVertId()]; !ok {
-			q.in[msg.DestVertId()] = make([]Msg, 0)
+		if _, ok := q.in[msg.Target()]; !ok {
+			q.in[msg.Target()] = make([]Msg, 0)
 		}
-		q.in[msg.DestVertId()] = append(q.in[msg.DestVertId()], msg)
+		q.in[msg.Target()] = append(q.in[msg.Target()], msg)
 	}
 }
 
@@ -106,7 +106,7 @@ func (q *OutMsgQ) sendMsgsAsync(id string, msgs []Msg) chan interface{} {
 func (q *OutMsgQ) addMsg(msg Msg) {
 	q.m.Lock()
 	defer q.m.Unlock()
-	pid := q.worker.partitionOf(msg.DestVertId())
+	pid := q.worker.partitionOf(msg.Target())
 	wid := q.worker.partitionMap[pid]
 	if _, ok := q.out[wid]; !ok {
 		q.out[wid] = make([]Msg, 0)

@@ -2,20 +2,20 @@ package waffle
 
 // messages passed from vert to vert
 type Msg interface {
-	DestVertId() string
-	SetDestVertId(string)
+	Target() string
+	SetTarget(string)
 }
 
 type MsgBase struct {
-	DestId string
+	TargetId string
 }
 
-func (m *MsgBase) DestVertId() string {
-	return m.DestId
+func (m *MsgBase) Target() string {
+	return m.TargetId
 }
 
-func (m *MsgBase) SetDestVertId(dest string) {
-	m.DestId = dest
+func (m *MsgBase) SetTarget(target string) {
+	m.TargetId = target
 }
 
 const (
@@ -60,10 +60,11 @@ type PhaseSummary struct {
 	JobId       string
 	WorkerId    string
 	PhaseId     int
-	Error       error
+	Errors      []error
 	ActiveVerts uint64
 	NumVerts    uint64
 	SentVerts   uint64
 	SentMsgs    uint64
 	PhaseTime   int64
+	PhaseInfo   map[string]interface{}
 }

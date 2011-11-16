@@ -23,7 +23,7 @@ var phaseMap map[int]phaseFn = map[int]phaseFn{
 type phaseStat struct {
 	startTime int64
 	endTime   int64
-	error     error
+	errors    []error
 }
 
 func (s *phaseStat) reset() {
@@ -37,6 +37,13 @@ func (s *phaseStat) start() {
 
 func (s *phaseStat) end() {
 	s.endTime = time.Seconds()
+}
+
+func (s *phaseStat) addError(err error) {
+	if s.errors == nil {
+		s.errors = make([]error, 0)
+	}
+	s.errors = append(s.errors, err)
 }
 
 type stepInfo struct {
@@ -184,7 +191,7 @@ func (w *Worker) executePhase(phaseFn phaseFn, exec *PhaseExec) {
 	w.phaseStats.start()
 	if err := phaseFn(w, exec); err != nil {
 		log.Printf("phaseFn finished with error: %v", err)
-		w.phaseStats.error = err
+		w.phaseStats.addError(err)
 	}
 	w.phaseStats.end()
 	if err := w.sendSummary(exec.PhaseId); err != nil {
@@ -236,7 +243,7 @@ func (w *Worker) sendSummary(phaseId int) error {
 		SentMsgs:    w.outq.numSent(),
 		ActiveVerts: 0,
 		NumVerts:    0,
-		Error:       w.phaseStats.error,
+		Errors:      w.phaseStats.errors,
 	}
 
 	for _, p := range w.partitions {

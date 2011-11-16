@@ -101,8 +101,8 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 			log.Fatalf("Phase mismatch in enterBarrier from worker %s", ps.WorkerId)
 		}
 
-		if ps.Error != nil {
-			m.handlePhaseError(ps)
+		if ps.Errors != nil {
+			m.handlePhaseErrors(ps.WorkerId, ps.Errors)
 		} else {
 			m.collectSummaryInfo(ps)
 		}
@@ -113,15 +113,17 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 	}
 }
 
-func (m *Master) handlePhaseError(ps *PhaseSummary) {
-	if err, ok := ps.Error.(*RecoverableError); ok {
-		// log the recoverable error
-		log.Printf("worker %s, recoverable error: %v", ps.WorkerId, err)
-		// add the error to recovery info and set the state to RECOVER (might not be needed, we can just check the recovery struct for errors?)
-		m.recoveryInfo.addError(ps.WorkerId, err)
-	} else {
-		log.Println("worker %s, unrecoverable error: %v", ps.WorkerId, ps.Error)
-		panic(ps.Error) // XXX Should actually be sending some kind of shutdown directive
+func (m *Master) handlePhaseErrors(workerId string, errors []error) {
+	for _, err := range errors {
+		if e, ok := err.(*RecoverableError); !ok {
+			// handle the first unrecoverable error
+			panic(e)
+		}
+	}
+	for _, err := range errors {
+		e := err.(*RecoverableError)
+		log.Printf("worker %s: recoverable error: %v", workerId, e)
+		m.recoveryInfo.addError(workerId, e)
 	}
 }
 

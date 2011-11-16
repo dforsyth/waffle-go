@@ -61,7 +61,7 @@ func (v *VertexBase) RemoveOutEdgeFrom(source, target string) {
 		MutType: erem,
 		Change:  []string{source, target},
 	}
-	msg.SetDestVertId(source)
+	msg.SetTarget(source)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
@@ -70,7 +70,7 @@ func (v *VertexBase) RemoveVertex(id string) {
 		MutType: vrem,
 		Change:  id,
 	}
-	msg.SetDestVertId(id)
+	msg.SetTarget(id)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
@@ -79,7 +79,7 @@ func (v *VertexBase) AddOutEdgeTo(source string, e Edge) {
 		MutType: eadd,
 		Change:  e,
 	}
-	msg.SetDestVertId(source)
+	msg.SetTarget(source)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
@@ -88,7 +88,7 @@ func (v *VertexBase) AddVertex(vert Vertex) {
 		MutType: vadd,
 		Change:  v,
 	}
-	msg.SetDestVertId(v.VertexId())
+	msg.SetTarget(v.VertexId())
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
@@ -97,7 +97,7 @@ func (v *VertexBase) Superstep() uint64 {
 }
 
 func (v *VertexBase) SendMessageTo(dest string, msg Msg) {
-	msg.SetDestVertId(dest)
+	msg.SetTarget(dest)
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
 
