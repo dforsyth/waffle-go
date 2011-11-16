@@ -18,11 +18,12 @@ const (
 )
 
 type RecoverableError struct {
-	message string
+	ErrorId     int
+	ErrorString string
 }
 
 func (e *RecoverableError) Error() string {
-	return e.message
+	return e.ErrorString
 }
 
 type RegistrationTimeoutError struct {

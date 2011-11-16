@@ -36,12 +36,16 @@ type phaseStatus struct {
 	failedWorkers []string // list of workers that have failed since phase started
 }
 
+type phaseInfo struct {
+	activeVerts uint64
+	numVerts    uint64
+	sentMsgs    uint64
+}
+
 type jobInfo struct {
+	phaseInfo      phaseInfo
 	canRegister    bool
 	lastCheckpoint uint64
-	activeVerts    uint64
-	numVerts       uint64
-	sentMsgs       uint64
 	totalSentMsgs  uint64
 }
 
@@ -75,9 +79,7 @@ type Master struct {
 	widFn        func(string, string) string
 	checkpointFn func(uint64) bool
 
-	// job stats
-	mPhaseInfo sync.RWMutex
-	pStatus    phaseStatus
+	pStatus phaseStatus
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -156,20 +158,17 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 // Zero out the stats from the last step
 func (m *Master) resetPhaseInfo() {
 	log.Println("resetting job info")
-	m.jobInfo.activeVerts = 0
-	m.jobInfo.sentMsgs = 0
-	m.jobInfo.numVerts = 0
+	m.jobInfo.phaseInfo.activeVerts = 0
+	m.jobInfo.phaseInfo.sentMsgs = 0
+	m.jobInfo.phaseInfo.numVerts = 0
 }
 
 // Update the stats from the current step
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
-	// These locks aren't needed since this function is only called in the serial barrier loop
-	m.mPhaseInfo.Lock()
-	m.jobInfo.activeVerts += ps.ActiveVerts
-	m.jobInfo.numVerts += ps.NumVerts
-	m.jobInfo.sentMsgs += ps.SentMsgs
-	m.jobInfo.totalSentMsgs += m.jobInfo.sentMsgs
-	m.mPhaseInfo.Unlock()
+	m.jobInfo.phaseInfo.activeVerts += ps.ActiveVerts
+	m.jobInfo.phaseInfo.numVerts += ps.NumVerts
+	m.jobInfo.phaseInfo.sentMsgs += ps.SentMsgs
+	m.jobInfo.totalSentMsgs += m.jobInfo.phaseInfo.sentMsgs
 }
 
 func (m *Master) SetRpcClient(c MasterRpcClient) {
@@ -316,7 +315,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 		PhaseId:    phaseId,
 		JobId:      m.Config.JobId,
 		Superstep:  m.superstep,
-		NumVerts:   m.jobInfo.numVerts,
+		NumVerts:   m.jobInfo.phaseInfo.numVerts,
 		Checkpoint: m.checkpointFn(m.superstep),
 	}
 }
@@ -400,8 +399,8 @@ func (m *Master) movePartitions(moveId string) error {
 func (m *Master) compute() error {
 	log.Printf("Starting computation")
 
-	log.Printf("Active verts = %d", m.jobInfo.activeVerts)
-	for m.superstep = 0; m.jobInfo.activeVerts > 0 || m.jobInfo.sentMsgs > 0; m.superstep++ {
+	log.Printf("Active verts = %d", m.jobInfo.phaseInfo.activeVerts)
+	for m.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		log.Printf("preparing for superstep %d", m.superstep)
 		m.executePhase(phaseSTEPPREPARE)

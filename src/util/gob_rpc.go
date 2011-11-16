@@ -28,6 +28,7 @@ func (c *GobRPCClientBase) init() {
 	gob.Register(&VertexBase{})
 	gob.Register(&EdgeBase{})
 	gob.Register(&MsgBase{})
+	gob.Register(&RecoverableError{})
 }
 
 type GobMasterRPCClient struct {
