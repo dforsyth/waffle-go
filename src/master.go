@@ -201,7 +201,7 @@ func (m *Master) ekg(id string, ekgch chan byte) {
 	addr := m.workerMap[id]
 	remote, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
-		panic("failed to resolve udpaddr")
+		panic("failed to resolve tcpaddr")
 		// m.barrierCh <- &barrierRemove{workerId: id}
 	}
 	for {

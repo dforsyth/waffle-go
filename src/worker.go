@@ -261,7 +261,27 @@ func (w *Worker) register() (err error) {
 		return
 	}
 	log.Printf("Registered as %s for job %s", w.workerId, w.jobId)
+	go w.masterEkg()
 	return
+}
+
+func (w *Worker) masterEkg() {
+	remote, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort))
+	if err != nil {
+		panic("failed to resolve tcpaddr")
+	}
+	for {
+		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
+			log.Printf("could not connect to master")
+		} else {
+			log.Printf("connected to master")
+			conn.Close()
+		}
+		select {
+		case <-time.After(10 * 1e9):
+			// need to add a channel to kill this on cleanup/job end
+		}
+	}
 }
 
 func (w *Worker) cleanup() error {
