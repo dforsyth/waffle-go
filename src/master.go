@@ -8,19 +8,6 @@ import (
 	"time"
 )
 
-type workerInfo struct {
-	// wid string
-	// addr string
-	// port string
-	ekgch chan byte
-}
-
-func newWorkerInfo() *workerInfo {
-	return &workerInfo{
-		ekgch: make(chan byte),
-	}
-}
-
 type MasterConfig struct {
 	MinWorkers             uint64
 	RegisterWait           int64
@@ -82,12 +69,11 @@ type Master struct {
 	startTime int64
 	endTime   int64
 
-	wInfo map[string]*workerInfo
-
 	widFn        func(string, string) string
 	checkpointFn func(uint64) bool
 
 	pStatus phaseStatus
+	ekgs    map[string]chan byte
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -152,7 +138,7 @@ func NewMaster(addr, port string) *Master {
 	m := &Master{
 		regch:     make(chan byte, 1),
 		barrierCh: make(chan interface{}),
-		wInfo:     make(map[string]*workerInfo),
+		ekgs:      make(map[string]chan byte),
 	}
 
 	m.InitNode(addr, port)
@@ -211,22 +197,26 @@ func (m *Master) startRPC() error {
 	return nil
 }
 
-func (m *Master) ekg(id string) {
+func (m *Master) ekg(id string, ekgch chan byte) {
 	addr := m.workerMap[id]
-	remote, err := net.ResolveUDPAddr("udp", addr)
+	remote, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		panic("failed to resolve udpaddr")
 		// m.barrierCh <- &barrierRemove{workerId: id}
 	}
 	for {
-		if conn, err := net.DialUDP("udp", nil, remote); err != nil {
+		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
 			log.Printf("worker %s could not be dialed", id)
 			m.barrierCh <- &barrierRemove{workerId: id}
 		} else {
 			log.Printf("successful connect to %s", id)
 			conn.Close()
 		}
-		<-time.After(m.Config.HeartbeatInterval)
+		select {
+		case <-time.After(m.Config.HeartbeatInterval):
+		case <-ekgch:
+			return // end the ekg loop
+		}
 	}
 }
 
@@ -246,10 +236,10 @@ func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
 		log.Printf("%s already registered, overwriting")
 	}
 	m.workerMap[workerId] = net.JoinHostPort(addr, port)
-	m.wInfo[workerId] = newWorkerInfo()
+	m.ekgs[workerId] = make(chan byte)
 
 	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, m.Config.JobId)
-	go m.ekg(workerId)
+	go m.ekg(workerId, m.ekgs[workerId])
 
 	return workerId, m.Config.JobId, nil
 }
@@ -431,6 +421,9 @@ func (m *Master) compute() error {
 
 // shutdown workers
 func (m *Master) shutdownWorkers() error {
+	for _, ch := range m.ekgs {
+		ch <- 1
+	}
 	/*
 		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
 			panic(e)
