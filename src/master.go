@@ -212,35 +212,22 @@ func (m *Master) startRPC() error {
 }
 
 func (m *Master) ekg(id string) {
-	/*
-		msg := &BasicMasterMsg{JobId: m.Config.JobId}
-		cl, e := m.cl(id)
-		if e != nil {
-			panic(e.String())
+	addr := m.workerMap[id]
+	remote, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		panic("failed to resolve udpaddr")
+		// m.barrierCh <- &barrierRemove{workerId: id}
+	}
+	for {
+		if conn, err := net.DialUDP("udp", nil, remote); err != nil {
+			log.Printf("worker %s could not be dialed", id)
+			m.barrierCh <- &barrierRemove{workerId: id}
+		} else {
+			log.Printf("successful connect to %s", id)
+			conn.Close()
 		}
-		info := m.wInfo[id]
-		var r Resp
-		for {
-			call := cl.Go("Worker.Healthcheck", msg, &r, nil)
-			// return or timeout
-			select {
-			case <-call.Done:
-				if call.Error != nil {
-					panic(call.Error)
-				}
-			case <-time.After(m.Config.HeartbeatTimeout):
-				// handle fault
-			}
-
-			// wait for the next interval
-			select {
-			case <-info.ekgch:
-				return
-			case <-time.Tick(m.Config.HeartbeatInterval):
-				// resetTimeout
-			}
-		}
-	*/
+		<-time.After(m.Config.HeartbeatInterval)
+	}
 }
 
 func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
