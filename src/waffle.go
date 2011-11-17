@@ -17,12 +17,13 @@ const (
 	phaseFAILURE
 )
 
-type RecoverableError struct {
+type WorkerError struct {
+	WorkerId    string
 	ErrorId     int
 	ErrorString string
 }
 
-func (e *RecoverableError) Error() string {
+func (e *WorkerError) Error() string {
 	return e.ErrorString
 }
 

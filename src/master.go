@@ -33,7 +33,15 @@ type MasterConfig struct {
 }
 
 type phaseStatus struct {
+	errors        []error
 	failedWorkers []string // list of workers that have failed since phase started
+}
+
+func (s *phaseStatus) addError(wid string, err error) {
+	if s.errors == nil {
+		s.errors = make([]error, 0)
+	}
+	s.errors = append(s.errors, err)
 }
 
 type phaseInfo struct {
@@ -53,7 +61,7 @@ type recoveryInfo struct {
 	errors []error
 }
 
-func (r *recoveryInfo) addError(wid string, err *RecoverableError) {
+func (r *recoveryInfo) addError(wid string, err *WorkerError) {
 	if r.errors == nil {
 		r.errors = make([]error, 0)
 	}
@@ -69,7 +77,7 @@ type Master struct {
 
 	currPhase int
 	regch     chan byte
-	barrierCh chan *PhaseSummary
+	barrierCh chan interface{}
 	superstep uint64
 	startTime int64
 	endTime   int64
@@ -85,6 +93,10 @@ type Master struct {
 	rpcClient MasterRpcClient
 }
 
+type barrierRemove struct {
+	workerId string
+}
+
 func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 	go func() {
 		m.barrierCh <- summary
@@ -92,24 +104,31 @@ func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 	return nil
 }
 
-// For now, this is the barrier that the workers "enter" for sync
-func (m *Master) barrier(ch chan *PhaseSummary) {
-	bmap := make(map[string]interface{})
-	for ps := range ch {
-		if m.Config.JobId != ps.JobId {
-			log.Fatalf("JobId mismatch in enterBarrier")
+func (m *Master) barrier(ch chan interface{}) {
+	barrier := make(map[string]interface{})
+	for workerId := range m.workerMap {
+		barrier[workerId] = nil
+	}
+	if len(barrier) == 0 {
+		log.Println("initial barrier map is empty!")
+		return
+	}
+	for e := range ch {
+		switch entry := e.(type) {
+		case *PhaseSummary:
+			if _, ok := barrier[entry.WorkerId]; ok {
+				log.Printf("%s is entering the barrier", entry.WorkerId)
+				m.collectSummaryInfo(entry)
+				delete(barrier, entry.WorkerId)
+			} else {
+				log.Printf("%s is not in the barrier map, discarding PhaseSummary", entry.WorkerId)
+			}
+		case *barrierRemove:
+			log.Printf("removing %s from barrier map", entry.workerId)
+			delete(barrier, entry.workerId)
 		}
-		if m.currPhase != ps.PhaseId {
-			log.Fatalf("Phase mismatch in enterBarrier from worker %s", ps.WorkerId)
-		}
-
-		if ps.Errors != nil {
-			m.handlePhaseErrors(ps.WorkerId, ps.Errors)
-		} else {
-			m.collectSummaryInfo(ps)
-		}
-		bmap[ps.WorkerId] = nil
-		if len(bmap) == len(m.workerMap) {
+		if len(barrier) == 0 {
+			// barrier is empty, all of the workers we have been waiting for are accounted for
 			return
 		}
 	}
@@ -117,13 +136,13 @@ func (m *Master) barrier(ch chan *PhaseSummary) {
 
 func (m *Master) handlePhaseErrors(workerId string, errors []error) {
 	for _, err := range errors {
-		if e, ok := err.(*RecoverableError); !ok {
+		if e, ok := err.(*WorkerError); !ok {
 			// handle the first unrecoverable error
 			panic(e)
 		}
 	}
 	for _, err := range errors {
-		e := err.(*RecoverableError)
+		e := err.(*WorkerError)
 		log.Printf("worker %s: recoverable error: %v", workerId, e)
 		m.recoveryInfo.addError(workerId, e)
 	}
@@ -132,7 +151,7 @@ func (m *Master) handlePhaseErrors(workerId string, errors []error) {
 func NewMaster(addr, port string) *Master {
 	m := &Master{
 		regch:     make(chan byte, 1),
-		barrierCh: make(chan *PhaseSummary),
+		barrierCh: make(chan interface{}),
 		wInfo:     make(map[string]*workerInfo),
 	}
 
@@ -165,6 +184,13 @@ func (m *Master) resetPhaseInfo() {
 
 // Update the stats from the current step
 func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
+	if ps.Errors != nil && len(ps.Errors) > 0 {
+		// if we find any errors in the summary, do not collect phase info data, just add to the recover info
+		for _, err := range ps.Errors {
+			m.pStatus.addError(ps.WorkerId, err)
+		}
+		return
+	}
 	m.jobInfo.phaseInfo.activeVerts += ps.ActiveVerts
 	m.jobInfo.phaseInfo.numVerts += ps.NumVerts
 	m.jobInfo.phaseInfo.sentMsgs += ps.SentMsgs
@@ -321,6 +347,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 }
 
 func (m *Master) executePhase(phaseId int) error {
+	// TODO: handle failed workers here
 	m.currPhase = phaseId
 	m.resetPhaseInfo()
 	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
@@ -328,19 +355,22 @@ func (m *Master) executePhase(phaseId int) error {
 	}
 	m.barrier(m.barrierCh)
 
-	// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
-	if len(m.pStatus.failedWorkers) > 0 {
-		log.Printf("detected %d failed workers", len(m.pStatus.failedWorkers))
-		if err := m.handleFailedWorkers(m.pStatus.failedWorkers); err != nil {
-			panic(err)
+	/*
+
+		// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
+		if len(m.pStatus.failedWorkers) > 0 {
+			log.Printf("detected %d failed workers", len(m.pStatus.failedWorkers))
+			if err := m.handleFailedWorkers(m.pStatus.failedWorkers); err != nil {
+				panic(err)
+			}
+		} else {
+			// XXX Move this
+			// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
+			if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
+				m.jobInfo.lastCheckpoint = m.superstep
+			}
 		}
-	} else {
-		// XXX Move this
-		// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
-		if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
-			m.jobInfo.lastCheckpoint = m.superstep
-		}
-	}
+	*/
 	return nil
 }
 

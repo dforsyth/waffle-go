@@ -161,7 +161,7 @@ func main() {
 		m.SetRpcClient(waffle.NewGobMasterRPCClient())
 		m.SetRpcServer(waffle.NewGobMasterRPCServer())
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
-			return true
+			return false
 		})
 		m.Run()
 	} else {
