@@ -35,6 +35,7 @@ type phaseInfo struct {
 	activeVerts uint64
 	numVerts    uint64
 	sentMsgs    uint64
+	lostWorkers []string
 	errors      []error
 }
 
@@ -118,7 +119,13 @@ func (m *Master) barrier(ch chan interface{}, info *phaseInfo) {
 			}
 		case *barrierRemove:
 			log.Printf("removing %s from barrier map", entry.workerId)
-			delete(barrier, entry.workerId)
+			if _, ok := m.workerPool[entry.workerId]; ok {
+				delete(barrier, entry.workerId)
+				// add lost workers to a list that can be used to check phase success later on
+				info.lostWorkers = append(info.lostWorkers, entry.workerId)
+			} else {
+				log.Printf("%s is not in the barrier map, discarding removal order", entry.workerId)
+			}
 		}
 		if len(barrier) == 0 {
 			// barrier is empty, all of the workers we have been waiting for are accounted for
@@ -172,7 +179,8 @@ func (m *Master) startRPC() error {
 	return nil
 }
 
-func (m *Master) ekg(hostPort string, ekgch chan byte) {
+func (m *Master) ekg(info *workerInfo) {
+	hostPort := net.JoinHostPort(info.host, info.port)
 	remote, err := net.ResolveTCPAddr("tcp", hostPort)
 	if err != nil {
 		panic("failed to resolve tcpaddr")
@@ -185,10 +193,11 @@ func (m *Master) ekg(hostPort string, ekgch chan byte) {
 		} else {
 			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
+			info.lastHeartbeat = time.Seconds()
 		}
 		select {
 		case <-time.After(m.Config.HeartbeatInterval):
-		case <-ekgch:
+		case <-info.heartbeatCh:
 			return // end the ekg loop
 		}
 	}
@@ -220,7 +229,7 @@ func (m *Master) RegisterWorker(host, port string) (string, error) {
 	}
 
 	log.Printf("Registered %s:%s as %s for job %s", host, port, hostPort, m.Config.JobId)
-	go m.ekg(hostPort, m.workerPool[hostPort].heartbeatCh)
+	go m.ekg(m.workerPool[hostPort])
 
 	return m.Config.JobId, nil
 }
@@ -328,24 +337,22 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 	}
 }
 
-func (m *Master) executePhase(phaseId int) error {
+func (m *Master) executePhase(phaseId int) (err error) {
 	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
+	if err = m.purgeFailedWorkers(); err != nil {
+		log.Println(err)
+		return
+	}
 
 	// once that's taken care of, bump the phase and continue
 	m.currPhase = phaseId
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
-	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
-		return err
+	if err = m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
+		return
 	}
 	m.barrier(m.barrierCh, info)
-	var numErrs = 0
-	if m.phaseStatus.errors != nil {
-		numErrs = len(m.phaseStatus.errors)
-	}
-	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.currPhase, m.jobInfo.phaseInfo.activeVerts,
-		m.jobInfo.phaseInfo.sentMsgs, numErrs)
 
 	// if any workers failed during the phase, the phase is invalid
 	failedWorkers := m.failedActiveWorkers()
@@ -367,30 +374,28 @@ func (m *Master) executePhase(phaseId int) error {
 		}
 	}
 
+	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.currPhase, m.jobInfo.phaseInfo.activeVerts,
+		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
 	m.commitPhaseInfo(info)
 
 	return nil
 }
 
-func (m *Master) handleFailedWorkers(failedWorkers []string) error {
-	for _, wid := range m.phaseStatus.failedWorkers {
-		delete(m.workerPool, wid)
-	}
-	/*
-		// register new workers, use recover timeout
-		if m.Config.WaitForNewWorkers {
-			if err := m.registerWorkers(); err != nil {
-				// XXX we actually want to die gracefully, but until then just panic
-				if toErr, ok := err.(*RegistrationTimeoutError); ok {
-					log.Printf("registration timeout error, storing information")
-					panic(toErr)
-				} else {
-					panic(err)
-				}
-				panic(err)
-			}
+func (m *Master) purgeFailedWorkers() error {
+	// XXX This is a really long lock...
+	m.poolLock.Lock()
+	defer m.poolLock.Unlock()
+	// First, remove any workers marked as failed from the worker pool
+	failedWorkers := make([]*workerInfo, 0)
+	for hostPort, info := range m.workerPool {
+		if info.failed {
+			failedWorkers = append(failedWorkers, info)
+			delete(m.workerPool, hostPort)
 		}
-	*/
+	}
+
+	// TODO: if we've dropped below minworkers, wait for more
+
 	if len(m.workerPool) == 0 {
 		return errors.New("no workers left")
 	}
