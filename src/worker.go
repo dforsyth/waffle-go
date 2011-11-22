@@ -68,8 +68,7 @@ type WorkerConfig struct {
 
 type Worker struct {
 	node
-	workerId string
-	jobId    string
+	jobId string
 
 	state int
 
@@ -121,7 +120,7 @@ func NewWorker(addr, port string) *Worker {
 // Most of this stuff is exposed for persisters
 
 func (w *Worker) WorkerId() string {
-	return w.workerId
+	return net.JoinHostPort(w.host, w.port)
 }
 
 func (w *Worker) Superstep() uint64 {
@@ -172,15 +171,14 @@ func (w *Worker) AddCombiner(c Combiner) {
 }
 
 // Expose for RPC interface
-func (w *Worker) SetTopology(workerMap map[string]string, partitionMap map[uint64]string) {
-	w.workerMap = workerMap
+func (w *Worker) SetTopology(partitionMap map[uint64]string) {
 	w.partitionMap = partitionMap
-	log.Printf("topology set")
+	log.Printf("partitions set")
 
-	for pid, wid := range w.partitionMap {
-		if wid == w.workerId {
+	for pid, hp := range w.partitionMap {
+		if hp == w.WorkerId() {
 			w.partitions[pid] = NewPartition(pid, w)
-			log.Printf("created partition %d on %s", pid, wid)
+			log.Printf("created partition %d on %s", pid, w.WorkerId())
 		}
 	}
 }
@@ -227,7 +225,7 @@ func (w *Worker) AddVertex(v Vertex) {
 	// we can send it to the correct worker
 	pid := w.partitionOf(v.VertexId())
 	wid := w.partitionMap[pid]
-	if wid == w.workerId {
+	if wid == w.WorkerId() {
 		w.partitions[pid].addVertex(v)
 	} else {
 		w.voutq.addVertex(v)
@@ -238,7 +236,7 @@ func (w *Worker) sendSummary(phaseId int) error {
 	ps := &PhaseSummary{
 		PhaseId:     phaseId,
 		JobId:       w.jobId,
-		WorkerId:    w.workerId,
+		WorkerId:    w.WorkerId(),
 		PhaseTime:   w.phaseStats.endTime - w.phaseStats.startTime,
 		SentMsgs:    w.outq.numSent(),
 		ActiveVerts: 0,
@@ -257,10 +255,10 @@ func (w *Worker) sendSummary(phaseId int) error {
 // Register step
 func (w *Worker) register() (err error) {
 	log.Println("Trying to register")
-	if w.workerId, w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), w.Host(), w.Port()); err != nil {
+	if w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), w.Host(), w.Port()); err != nil {
 		return
 	}
-	log.Printf("Registered as %s for job %s", w.workerId, w.jobId)
+	log.Printf("Registered as %s for job %s", w.WorkerId(), w.jobId)
 	go w.masterEkg()
 	return
 }
@@ -268,11 +266,12 @@ func (w *Worker) register() (err error) {
 func (w *Worker) masterEkg() {
 	remote, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort))
 	if err != nil {
-		panic("failed to resolve tcpaddr")
+		panic("failed to resolve master tcpaddr")
 	}
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
 			log.Printf("could not connect to master")
+			panic("Could not reach master")
 		} else {
 			log.Printf("connected to master")
 			conn.Close()
@@ -300,7 +299,7 @@ func loadPhase1(w *Worker, pe *PhaseExec) error {
 			w.voutq.wait.Wait()
 		}
 	} else {
-		log.Printf("worker %s has no loader", w.workerId)
+		log.Printf("worker %s has no loader", w.WorkerId())
 	}
 	return nil
 }
@@ -327,7 +326,7 @@ func loadPhase3(w *Worker, pe *PhaseExec) error {
 			w.inq.addMsgs(inbound)
 		}
 	} else {
-		log.Printf("worker %s has no persister", w.workerId)
+		log.Printf("worker %s has no persister", w.WorkerId())
 	}
 	return nil
 }
@@ -379,7 +378,7 @@ func step(w *Worker, pe *PhaseExec) error {
 				log.Printf("Persister %d: %d vertices, %d messages", pid, len(verts), len(msgs))
 			}
 		} else {
-			log.Printf("worker %s has no persister", w.workerId)
+			log.Printf("worker %s has no persister", w.WorkerId())
 		}
 	}
 
@@ -413,12 +412,13 @@ func writeResults(w *Worker, pe *PhaseExec) error {
 	if w.resultWriter != nil {
 		return w.resultWriter.WriteResults(w)
 	} else {
-		log.Println("worker %s has no resultWriter", w.workerId)
+		log.Println("worker %s has no resultWriter", w.WorkerId())
 	}
 	return nil
 }
 
 func (w *Worker) shutdown() {
+	log.Printf("worker %s shutting down", w.WorkerId())
 	return
 }
 

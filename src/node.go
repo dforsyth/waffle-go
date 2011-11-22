@@ -9,27 +9,22 @@ type Node interface {
 }
 
 type node struct {
-	addr         string
+	host         string
 	port         string
 	partitionMap map[uint64]string // partition map (partition id -> worker id)
-	workerMap    map[string]string // worker map (worker id -> worker address)
 	partFn       func(string, uint64) uint64
 }
 
 func (n *node) Host() string {
-	return n.addr
+	return n.host
 }
 
 func (n *node) Port() string {
 	return n.port
 }
 
-func (n *node) Workers() map[string]string {
-	return n.workerMap
-}
-
-func (n *node) InitNode(addr, port string) {
-	n.addr = addr
+func (n *node) InitNode(host, port string) {
+	n.host = host
 	n.port = port
 	n.partFn = func(id string, n uint64) uint64 {
 		var sum uint64 = 0

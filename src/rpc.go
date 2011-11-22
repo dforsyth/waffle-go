@@ -2,7 +2,7 @@ package waffle
 
 type WorkerRpcClient interface {
 	// Init()
-	Register(string, string, string) (string, string, error)
+	Register(string, string, string) (string, error)
 	SendSummary(string, *PhaseSummary) error
 	SendVertices(string, []Vertex) error
 	SendMessages(string, []Msg) error

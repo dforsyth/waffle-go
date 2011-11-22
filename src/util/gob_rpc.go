@@ -116,16 +116,16 @@ func (c *GobWorkerRPCClient) masterClient(masterAddr string) (*rpc.Client, error
 	return c.mclient, nil
 }
 
-func (c *GobWorkerRPCClient) Register(masterAddr, host, port string) (string, string, error) {
+func (c *GobWorkerRPCClient) Register(masterAddr, host, port string) (string, error) {
 	mclient, err := c.masterClient(masterAddr)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	var resp RegisterResp
 	if err = mclient.Call("GobMasterRPCServer.RegisterWorker", &RegisterInfo{Addr: host, Port: port}, &resp); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return resp.WorkerId, resp.JobId, nil
+	return resp.JobId, nil
 }
 
 func (c *GobWorkerRPCClient) SendSummary(masterAddr string, summary *PhaseSummary) error {
@@ -184,11 +184,11 @@ func (s *GobMasterRPCServer) Start(master *Master) {
 }
 
 func (s *GobMasterRPCServer) RegisterWorker(info *RegisterInfo, resp *RegisterResp) error {
-	workerId, jobId, err := s.master.RegisterWorker(info.Addr, info.Port)
+	jobId, err := s.master.RegisterWorker(info.Addr, info.Port)
 	if err != nil {
 		return err
 	}
-	resp.WorkerId, resp.JobId = workerId, jobId
+	resp.JobId = jobId
 	return nil
 }
 
@@ -224,7 +224,7 @@ func (s *GobWorkerRPCServer) ExecPhase(exec *PhaseExec, resp *Resp) error {
 
 func (s *GobWorkerRPCServer) RecieveTopology(info *TopologyInfo, resp *Resp) error {
 	*resp = OK
-	s.worker.SetTopology(info.WorkerMap, info.PartitionMap)
+	s.worker.SetTopology(info.PartitionMap)
 	return nil
 }
 

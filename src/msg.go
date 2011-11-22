@@ -32,18 +32,17 @@ type MutationMsg struct {
 }
 
 type RegisterInfo struct {
-	Addr string
-	Port string
+	Addr          string
+	Port          string
+	MinPartitions uint64
 }
 
 type RegisterResp struct {
-	JobId    string
-	WorkerId string
+	JobId string
 }
 
 type TopologyInfo struct {
 	JobId        string
-	WorkerMap    map[string]string
 	PartitionMap map[uint64]string
 }
 

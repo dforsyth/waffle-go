@@ -44,23 +44,22 @@ type jobInfo struct {
 	totalSentMsgs  uint64
 }
 
-type recoveryInfo struct {
-	errors []error
-}
-
-func (r *recoveryInfo) addError(wid string, err *WorkerError) {
-	if r.errors == nil {
-		r.errors = make([]error, 0)
-	}
-	r.errors = append(r.errors, err)
+type workerInfo struct {
+	host          string
+	port          string
+	failed        bool
+	lastHeartbeat int64
+	heartbeatCh   chan byte
 }
 
 type Master struct {
 	node
 
-	Config       MasterConfig
-	recoveryInfo recoveryInfo
-	jobInfo      jobInfo
+	Config  MasterConfig
+	jobInfo jobInfo
+
+	workerPool map[string]*workerInfo
+	poolLock   sync.RWMutex
 
 	currPhase int
 	regch     chan byte
@@ -69,11 +68,10 @@ type Master struct {
 	startTime int64
 	endTime   int64
 
-	widFn        func(string, string) string
 	checkpointFn func(uint64) bool
 
-	pStatus phaseStatus
-	ekgs    map[string]chan byte
+	phaseStatus phaseStatus
+	ekgs        map[string]chan byte
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -81,6 +79,7 @@ type Master struct {
 
 type barrierRemove struct {
 	workerId string
+	error    error
 }
 
 func (m *Master) EnterBarrier(summary *PhaseSummary) error {
@@ -92,8 +91,8 @@ func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 
 func (m *Master) barrier(ch chan interface{}) {
 	barrier := make(map[string]interface{})
-	for workerId := range m.workerMap {
-		barrier[workerId] = nil
+	for hostPort := range m.workerPool {
+		barrier[hostPort] = nil
 	}
 	if len(barrier) == 0 {
 		log.Println("initial barrier map is empty!")
@@ -120,20 +119,6 @@ func (m *Master) barrier(ch chan interface{}) {
 	}
 }
 
-func (m *Master) handlePhaseErrors(workerId string, errors []error) {
-	for _, err := range errors {
-		if e, ok := err.(*WorkerError); !ok {
-			// handle the first unrecoverable error
-			panic(e)
-		}
-	}
-	for _, err := range errors {
-		e := err.(*WorkerError)
-		log.Printf("worker %s: recoverable error: %v", workerId, e)
-		m.recoveryInfo.addError(workerId, e)
-	}
-}
-
 func NewMaster(addr, port string) *Master {
 	m := &Master{
 		regch:     make(chan byte, 1),
@@ -143,17 +128,10 @@ func NewMaster(addr, port string) *Master {
 
 	m.InitNode(addr, port)
 	m.regch <- 1
-	m.widFn = func(addr, port string) string {
-		return net.JoinHostPort(addr, port)
-	}
 	m.checkpointFn = func(superstep uint64) bool {
 		return false
 	}
 	return m
-}
-
-func (m *Master) SetWorkerIdFn(fn func(string, string) string) {
-	m.widFn = fn
 }
 
 func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
@@ -173,7 +151,7 @@ func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
 	if ps.Errors != nil && len(ps.Errors) > 0 {
 		// if we find any errors in the summary, do not collect phase info data, just add to the recover info
 		for _, err := range ps.Errors {
-			m.pStatus.addError(ps.WorkerId, err)
+			m.phaseStatus.addError(ps.WorkerId, err)
 		}
 		return
 	}
@@ -197,19 +175,18 @@ func (m *Master) startRPC() error {
 	return nil
 }
 
-func (m *Master) ekg(id string, ekgch chan byte) {
-	addr := m.workerMap[id]
-	remote, err := net.ResolveTCPAddr("tcp", addr)
+func (m *Master) ekg(hostPort string, ekgch chan byte) {
+	remote, err := net.ResolveTCPAddr("tcp", hostPort)
 	if err != nil {
 		panic("failed to resolve tcpaddr")
 		// m.barrierCh <- &barrierRemove{workerId: id}
 	}
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
-			log.Printf("worker %s could not be dialed", id)
-			m.barrierCh <- &barrierRemove{workerId: id}
+			log.Printf("worker %s could not be dialed", hostPort)
+			m.barrierCh <- &barrierRemove{workerId: hostPort}
 		} else {
-			log.Printf("successful connect to %s", id)
+			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
 		}
 		select {
@@ -220,44 +197,51 @@ func (m *Master) ekg(id string, ekgch chan byte) {
 	}
 }
 
-func (m *Master) RegisterWorker(addr, port string) (string, string, error) {
+func (m *Master) RegisterWorker(host, port string) (string, error) {
 	<-m.regch
 	defer func() { m.regch <- 1 }()
 
 	if !m.jobInfo.canRegister {
 		// cant register, get out
-		return "", "", nil
+		return "", errors.New("Registration is not open")
 	}
 
-	log.Printf("Attempting to register %s:%s", addr, port)
+	hostPort := net.JoinHostPort(host, port)
 
-	workerId := m.widFn(addr, port)
-	if _, ok := m.workerMap[workerId]; ok {
-		log.Printf("%s already registered, overwriting")
+	log.Printf("Attempting to register %s", hostPort)
+
+	if _, ok := m.workerPool[hostPort]; ok {
+		log.Printf("%s already in the worker pool, replying with job id", hostPort)
+		return m.Config.JobId, nil
 	}
-	m.workerMap[workerId] = net.JoinHostPort(addr, port)
-	m.ekgs[workerId] = make(chan byte)
+	m.workerPool[hostPort] = &workerInfo{
+		host:          host,
+		port:          port,
+		failed:        false,
+		lastHeartbeat: 0,
+		heartbeatCh:   make(chan byte),
+	}
 
-	log.Printf("Registered %s:%s as %s for job %s", addr, port, workerId, m.Config.JobId)
-	go m.ekg(workerId, m.ekgs[workerId])
+	log.Printf("Registered %s:%s as %s for job %s", host, port, hostPort, m.Config.JobId)
+	go m.ekg(hostPort, m.workerPool[hostPort].heartbeatCh)
 
-	return workerId, m.Config.JobId, nil
+	return m.Config.JobId, nil
 }
 
 func (m *Master) registerWorkers() error {
 	log.Printf("Starting registration phase")
 
-	m.workerMap = make(map[string]string)
+	m.workerPool = make(map[string]*workerInfo)
 
 	// Should do this in a more Go-ish way, maybe with a select statement?
 	m.jobInfo.canRegister = true
-	for timer := 0; (m.Config.MinWorkers > 0 && uint64(len(m.workerMap)) < m.Config.MinWorkers) ||
+	for timer := 0; (m.Config.MinWorkers > 0 && uint64(len(m.workerPool)) < m.Config.MinWorkers) ||
 		(m.Config.RegisterWait > 0 && int64(timer) < m.Config.RegisterWait); timer += 1 * 1e9 {
 		<-time.After(1 * 1e9)
 	}
 	m.jobInfo.canRegister = false
 
-	if len(m.workerMap) == 0 || uint64(len(m.workerMap)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
+	if len(m.workerPool) == 0 || uint64(len(m.workerPool)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
 		return errors.New("Not enough workers registered")
 	}
 
@@ -272,25 +256,25 @@ func (m *Master) determinePartitions() {
 	// XXX a better set of server configurations would allow us to set min partitions per worker.
 	// They could send this information at registration time.
 	for i, p := 0, 0; i < int(m.Config.MinPartitionsPerWorker); i++ {
-		for _, workerId := range m.workerMap {
-			m.partitionMap[uint64(p)] = workerId
+		for hostPort := range m.workerPool {
+			m.partitionMap[uint64(p)] = hostPort
 			p++
 		}
 	}
 
-	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerMap))
+	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerPool))
 }
 
 func (m *Master) pushTopology() {
-	log.Printf("Distributing worker and partition information")
+	log.Printf("Distributing topology information")
 
-	topInfo := &TopologyInfo{JobId: m.Config.JobId, PartitionMap: m.partitionMap, WorkerMap: m.workerMap}
+	topInfo := &TopologyInfo{JobId: m.Config.JobId, PartitionMap: m.partitionMap}
 	var wg sync.WaitGroup
-	for _, workerAddr := range m.workerMap {
-		addr := workerAddr
+	for hostPort := range m.workerPool {
+		hp := hostPort
 		wg.Add(1)
 		go func() {
-			if err := m.rpcClient.PushTopology(addr, topInfo); err != nil {
+			if err := m.rpcClient.PushTopology(hp, topInfo); err != nil {
 				panic(err)
 			}
 			wg.Done()
@@ -301,12 +285,36 @@ func (m *Master) pushTopology() {
 	log.Printf("Done distributing worker and partition info")
 }
 
+// Mark worker hostPort as failed
+func (m *Master) markWorkerFailed(hostPort string) {
+	m.poolLock.Lock()
+	defer m.poolLock.Unlock()
+	if info, ok := m.workerPool[hostPort]; ok {
+		info.failed = true
+	} else {
+		log.Printf("cannot find %s in the worker pool to mark as failed", hostPort)
+	}
+}
+
+// Workers that are marked as failed but still in the worker pool
+func (m *Master) failedActiveWorkers() []*workerInfo {
+	m.poolLock.RLock()
+	defer m.poolLock.RUnlock()
+	failed := make([]*workerInfo, 0)
+	for _, info := range m.workerPool {
+		if info.failed {
+			failed = append(failed, info)
+		}
+	}
+	return failed
+}
+
 func (m *Master) sendExecToAllWorkers(exec *PhaseExec) error {
-	for _, workerAddr := range m.workerMap {
-		addr := workerAddr
+	for hostPort := range m.workerPool {
+		hp := hostPort
 		go func() {
-			if err := m.rpcClient.ExecutePhase(addr, exec); err != nil {
-				panic(err)
+			if err := m.rpcClient.ExecutePhase(hp, exec); err != nil {
+				m.markWorkerFailed(hp)
 			}
 		}()
 	}
@@ -324,36 +332,48 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 }
 
 func (m *Master) executePhase(phaseId int) error {
-	// TODO: handle failed workers here
+	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
+
+	// once that's taken care of, bump the phase and continue
 	m.currPhase = phaseId
 	m.resetPhaseInfo()
 	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
 		return err
 	}
 	m.barrier(m.barrierCh)
+	var numErrs = 0
+	if m.phaseStatus.errors != nil {
+		numErrs = len(m.phaseStatus.errors)
+	}
+	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.currPhase, m.jobInfo.phaseInfo.activeVerts,
+		m.jobInfo.phaseInfo.sentMsgs, numErrs)
 
-	/*
+	// if any workers failed during the phase, the phase is invalid
+	failedWorkers := m.failedActiveWorkers()
+	if len(failedWorkers) > 0 {
+		return errors.New("failed workers error") // NewPhaseFailureError("Failed Workers", failedWorkers)	
+	}
 
-		// check phase status for failures.  if there are any, reallocate the topology and move the partitions of the failed workers to other workers.
-		if len(m.pStatus.failedWorkers) > 0 {
-			log.Printf("detected %d failed workers", len(m.pStatus.failedWorkers))
-			if err := m.handleFailedWorkers(m.pStatus.failedWorkers); err != nil {
-				panic(err)
-			}
-		} else {
-			// XXX Move this
-			// If we're in the superstep phase, check checkpointFn and set lastCheckpoint
-			if m.currPhase == phaseSUPERSTEP && m.checkpointFn(m.superstep) {
-				m.jobInfo.lastCheckpoint = m.superstep
-			}
+	if m.phaseStatus.errors != nil && len(m.phaseStatus.errors) > 0 {
+		// handle phase errors
+		for error := range m.phaseStatus.errors {
+			/*
+				if err, ok := error.(RecoverablePhaseError); ok {
+					// not really sure what the care for this would be...
+				} else {
+					panic("unrecoverable phase error...")
+				}
+			*/
+			panic(error)
 		}
-	*/
+	}
+
 	return nil
 }
 
 func (m *Master) handleFailedWorkers(failedWorkers []string) error {
-	for _, wid := range m.pStatus.failedWorkers {
-		delete(m.workerMap, wid)
+	for _, wid := range m.phaseStatus.failedWorkers {
+		delete(m.workerPool, wid)
 	}
 	/*
 		// register new workers, use recover timeout
@@ -370,11 +390,11 @@ func (m *Master) handleFailedWorkers(failedWorkers []string) error {
 			}
 		}
 	*/
-	if len(m.workerMap) == 0 {
+	if len(m.workerPool) == 0 {
 		return errors.New("no workers left")
 	}
 	// Move the failed worker partitions to other workers
-	for _, wid := range m.pStatus.failedWorkers {
+	for _, wid := range m.phaseStatus.failedWorkers {
 		if err := m.movePartitions(wid); err != nil {
 			return err
 		}
@@ -387,9 +407,9 @@ func (m *Master) movePartitions(moveId string) error {
 	// XXX for now, we just move the partitions for dead nodes to the first worker we get on map iteration.  Make this intelligent later.
 	// Have this function return error so that we can fail if there is some kind of assignment overflow in the future heuristic
 	var newOwner string
-	for id := range m.workerMap {
-		if id != moveId {
-			newOwner = id
+	for hostPort := range m.workerPool {
+		if hostPort != moveId {
+			newOwner = hostPort
 			break
 		}
 	}
