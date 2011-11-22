@@ -62,7 +62,6 @@ type Master struct {
 	poolLock   sync.RWMutex
 
 	currPhase int
-	regch     chan byte
 	barrierCh chan interface{}
 	superstep uint64
 	startTime int64
@@ -71,7 +70,6 @@ type Master struct {
 	checkpointFn func(uint64) bool
 
 	phaseStatus phaseStatus
-	ekgs        map[string]chan byte
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -121,13 +119,10 @@ func (m *Master) barrier(ch chan interface{}) {
 
 func NewMaster(addr, port string) *Master {
 	m := &Master{
-		regch:     make(chan byte, 1),
 		barrierCh: make(chan interface{}),
-		ekgs:      make(map[string]chan byte),
 	}
 
 	m.InitNode(addr, port)
-	m.regch <- 1
 	m.checkpointFn = func(superstep uint64) bool {
 		return false
 	}
@@ -198,8 +193,8 @@ func (m *Master) ekg(hostPort string, ekgch chan byte) {
 }
 
 func (m *Master) RegisterWorker(host, port string) (string, error) {
-	<-m.regch
-	defer func() { m.regch <- 1 }()
+	m.poolLock.Lock()
+	defer m.poolLock.Unlock()
 
 	if !m.jobInfo.canRegister {
 		// cant register, get out
@@ -441,8 +436,8 @@ func (m *Master) compute() error {
 
 // shutdown workers
 func (m *Master) shutdownWorkers() error {
-	for _, ch := range m.ekgs {
-		ch <- 1
+	for _, info := range m.workerPool {
+		info.heartbeatCh <- 1
 	}
 	/*
 		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
