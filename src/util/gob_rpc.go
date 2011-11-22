@@ -1,10 +1,10 @@
 package waffle
 
 import (
-	"gob"
-	"http"
+	"encoding/gob"
 	"net"
-	"rpc"
+	"net/http"
+	"net/rpc"
 	"sync"
 )
 

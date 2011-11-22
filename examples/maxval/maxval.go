@@ -2,10 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/gob"
 	"errors"
 	"flag"
 	"fmt"
-	"gob"
 	"io"
 	"net"
 	"os"

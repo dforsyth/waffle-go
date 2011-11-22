@@ -1,7 +1,7 @@
 package waffle
 
 import (
-	"gob"
+	"encoding/gob"
 	"log"
 	"os"
 	"path"
