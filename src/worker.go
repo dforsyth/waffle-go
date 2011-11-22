@@ -402,7 +402,7 @@ func step(w *Worker, pe *PhaseExec) error {
 	w.outq.flush()
 	w.outq.wait.Wait()
 
-	log.Println("Superstep complete")
+	log.Printf("Superstep %d complete", w.stepInfo.superstep)
 	return nil
 }
 

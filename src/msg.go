@@ -67,3 +67,7 @@ type PhaseSummary struct {
 	PhaseTime   int64
 	PhaseInfo   map[string]interface{}
 }
+
+func (ps *PhaseSummary) worker() string {
+	return ps.WorkerId
+}

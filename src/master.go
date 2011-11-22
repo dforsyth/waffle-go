@@ -62,7 +62,7 @@ type Master struct {
 	poolLock   sync.RWMutex
 
 	currPhase int
-	barrierCh chan interface{}
+	barrierCh chan barrierEntry
 	superstep uint64
 	startTime int64
 	endTime   int64
@@ -74,9 +74,17 @@ type Master struct {
 	rpcClient MasterRpcClient
 }
 
+type barrierEntry interface {
+	worker() string
+}
+
 type barrierRemove struct {
-	workerId string
+	hostPort string
 	error    error
+}
+
+func (e *barrierRemove) worker() string {
+	return e.hostPort
 }
 
 func (m *Master) EnterBarrier(summary *PhaseSummary) error {
@@ -86,7 +94,8 @@ func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 	return nil
 }
 
-func (m *Master) barrier(ch chan interface{}, info *phaseInfo) {
+func (m *Master) barrier(ch chan barrierEntry, info *phaseInfo) {
+	// create a map of workers to wait for using the current workerpool
 	barrier := make(map[string]interface{})
 	for hostPort := range m.workerPool {
 		barrier[hostPort] = nil
@@ -95,26 +104,25 @@ func (m *Master) barrier(ch chan interface{}, info *phaseInfo) {
 		log.Println("initial barrier map is empty!")
 		return
 	}
+	// wait on the barrier channel
 	for e := range ch {
+		if _, ok := barrier[e.worker()]; !ok {
+			log.Printf("%s is not in the barrier map, discaring entry", e.worker())
+			continue
+		}
+
 		switch entry := e.(type) {
 		case *PhaseSummary:
-			if _, ok := barrier[entry.WorkerId]; ok {
-				log.Printf("%s is entering the barrier", entry.WorkerId)
-				collectSummaryInfo(info, entry)
-				delete(barrier, entry.WorkerId)
-			} else {
-				log.Printf("%s is not in the barrier map, discarding PhaseSummary", entry.WorkerId)
-			}
+			log.Printf("%s is entering the barrier", entry.WorkerId)
+			collectSummaryInfo(info, entry)
+			delete(barrier, entry.WorkerId)
 		case *barrierRemove:
-			log.Printf("removing %s from barrier map", entry.workerId)
-			if _, ok := m.workerPool[entry.workerId]; ok {
-				delete(barrier, entry.workerId)
-				// add lost workers to a list that can be used to check phase success later on
-				info.lostWorkers = append(info.lostWorkers, entry.workerId)
-			} else {
-				log.Printf("%s is not in the barrier map, discarding removal order", entry.workerId)
-			}
+			log.Printf("removing %s from barrier map", entry.hostPort)
+			delete(barrier, entry.hostPort)
+			// add lost workers to a list that can be used to check phase success later on
+			info.lostWorkers = append(info.lostWorkers, entry.hostPort)
 		}
+
 		if len(barrier) == 0 {
 			// barrier is empty, all of the workers we have been waiting for are accounted for
 			return
@@ -124,7 +132,7 @@ func (m *Master) barrier(ch chan interface{}, info *phaseInfo) {
 
 func NewMaster(addr, port string) *Master {
 	m := &Master{
-		barrierCh: make(chan interface{}),
+		barrierCh: make(chan barrierEntry),
 	}
 
 	m.initNode(addr, port)
@@ -184,7 +192,7 @@ func (m *Master) ekg(info *workerInfo) {
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
 			log.Printf("worker %s could not be dialed", hostPort)
-			m.barrierCh <- &barrierRemove{workerId: hostPort}
+			m.barrierCh <- &barrierRemove{hostPort: hostPort}
 		} else {
 			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
