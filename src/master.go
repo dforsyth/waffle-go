@@ -127,7 +127,7 @@ func NewMaster(addr, port string) *Master {
 		barrierCh: make(chan interface{}),
 	}
 
-	m.InitNode(addr, port)
+	m.initNode(addr, port)
 	m.checkpointFn = func(superstep uint64) bool {
 		return false
 	}

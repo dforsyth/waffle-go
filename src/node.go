@@ -23,7 +23,7 @@ func (n *node) Port() string {
 	return n.port
 }
 
-func (n *node) InitNode(host, port string) {
+func (n *node) initNode(host, port string) {
 	n.host = host
 	n.port = port
 	n.partFn = func(id string, n uint64) uint64 {

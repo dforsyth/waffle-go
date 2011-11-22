@@ -112,7 +112,7 @@ func NewWorker(addr, port string) *Worker {
 
 	w.stepInfo, w.lastStepInfo = &stepInfo{}, &stepInfo{}
 
-	w.InitNode(addr, port)
+	w.initNode(addr, port)
 
 	return w
 }
