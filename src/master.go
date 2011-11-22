@@ -344,7 +344,8 @@ func (m *Master) executePhase(phaseId int) (err error) {
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
-	if err = m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
+	exec := m.newPhaseExec(phaseId)
+	if err = m.sendExecToAllWorkers(exec); err != nil {
 		return
 	}
 	m.barrier(m.barrierCh, info)
@@ -366,7 +367,13 @@ func (m *Master) executePhase(phaseId int) (err error) {
 
 	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.currPhase, m.jobInfo.phaseInfo.activeVerts,
 		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
+
 	m.commitPhaseInfo(info)
+	/*
+		if exec.checkpoint {
+			m.logSuccessfulPhase() // for recovery purposes store the last successful checkpointed phase	
+		}
+	*/
 
 	return nil
 }
