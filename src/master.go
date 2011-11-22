@@ -19,18 +19,6 @@ type MasterConfig struct {
 	StartStep              uint64
 }
 
-type phaseStatus struct {
-	errors        []error
-	failedWorkers []string // list of workers that have failed since phase started
-}
-
-func (s *phaseStatus) addError(wid string, err error) {
-	if s.errors == nil {
-		s.errors = make([]error, 0)
-	}
-	s.errors = append(s.errors, err)
-}
-
 type phaseInfo struct {
 	activeVerts uint64
 	numVerts    uint64
@@ -79,9 +67,8 @@ type Master struct {
 	startTime int64
 	endTime   int64
 
-	checkpointFn func(uint64) bool
-
-	phaseStatus phaseStatus
+	checkpointFn      func(uint64) bool
+	phaseErrorHandler func([]error) bool
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -142,6 +129,9 @@ func NewMaster(addr, port string) *Master {
 
 	m.InitNode(addr, port)
 	m.checkpointFn = func(superstep uint64) bool {
+		return false
+	}
+	m.phaseErrorHandler = func(errors []error) bool {
 		return false
 	}
 	return m
@@ -360,17 +350,9 @@ func (m *Master) executePhase(phaseId int) (err error) {
 		return errors.New("lost workers during phase") // NewPhaseFailureError("Failed Workers", info.lostWorkers)
 	}
 
-	if m.phaseStatus.errors != nil && len(m.phaseStatus.errors) > 0 {
-		// handle phase errors
-		for error := range m.phaseStatus.errors {
-			/*
-				if err, ok := error.(RecoverablePhaseError); ok {
-					// not really sure what the care for this would be...
-				} else {
-					panic("unrecoverable phase error...")
-				}
-			*/
-			panic(error)
+	if len(info.errors) > 0 {
+		if !m.phaseErrorHandler(info.errors) {
+			return errors.New("phase errors") // NewPhaseErrorsError("Phase Errors", info.errors)
 		}
 	}
 
@@ -400,8 +382,9 @@ func (m *Master) purgeFailedWorkers() error {
 		return errors.New("no workers left")
 	}
 	// Move the failed worker partitions to other workers
-	for _, wid := range m.phaseStatus.failedWorkers {
-		if err := m.movePartitions(wid); err != nil {
+	for _, info := range failedWorkers {
+		hostPort := net.JoinHostPort(info.host, info.port)
+		if err := m.movePartitions(hostPort); err != nil {
 			return err
 		}
 	}
