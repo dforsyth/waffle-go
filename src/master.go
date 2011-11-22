@@ -35,6 +35,16 @@ type phaseInfo struct {
 	activeVerts uint64
 	numVerts    uint64
 	sentMsgs    uint64
+	errors      []error
+}
+
+func newPhaseInfo() *phaseInfo {
+	return &phaseInfo{
+		activeVerts: 0,
+		numVerts:    0,
+		sentMsgs:    0,
+		errors:      make([]error, 0),
+	}
 }
 
 type jobInfo struct {
@@ -87,7 +97,7 @@ func (m *Master) EnterBarrier(summary *PhaseSummary) error {
 	return nil
 }
 
-func (m *Master) barrier(ch chan interface{}) {
+func (m *Master) barrier(ch chan interface{}, info *phaseInfo) {
 	barrier := make(map[string]interface{})
 	for hostPort := range m.workerPool {
 		barrier[hostPort] = nil
@@ -101,7 +111,7 @@ func (m *Master) barrier(ch chan interface{}) {
 		case *PhaseSummary:
 			if _, ok := barrier[entry.WorkerId]; ok {
 				log.Printf("%s is entering the barrier", entry.WorkerId)
-				m.collectSummaryInfo(entry)
+				collectSummaryInfo(info, entry)
 				delete(barrier, entry.WorkerId)
 			} else {
 				log.Printf("%s is not in the barrier map, discarding PhaseSummary", entry.WorkerId)
@@ -133,26 +143,18 @@ func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 	m.checkpointFn = fn
 }
 
-// Zero out the stats from the last step
-func (m *Master) resetPhaseInfo() {
-	log.Println("resetting job info")
-	m.jobInfo.phaseInfo.activeVerts = 0
-	m.jobInfo.phaseInfo.sentMsgs = 0
-	m.jobInfo.phaseInfo.numVerts = 0
+// Update the stats from the current step
+func collectSummaryInfo(info *phaseInfo, ps *PhaseSummary) {
+	info.activeVerts += ps.ActiveVerts
+	info.numVerts += ps.NumVerts
+	info.sentMsgs += ps.SentMsgs
+	info.errors = append(info.errors, ps.Errors...)
 }
 
-// Update the stats from the current step
-func (m *Master) collectSummaryInfo(ps *PhaseSummary) {
-	if ps.Errors != nil && len(ps.Errors) > 0 {
-		// if we find any errors in the summary, do not collect phase info data, just add to the recover info
-		for _, err := range ps.Errors {
-			m.phaseStatus.addError(ps.WorkerId, err)
-		}
-		return
-	}
-	m.jobInfo.phaseInfo.activeVerts += ps.ActiveVerts
-	m.jobInfo.phaseInfo.numVerts += ps.NumVerts
-	m.jobInfo.phaseInfo.sentMsgs += ps.SentMsgs
+func (m *Master) commitPhaseInfo(info *phaseInfo) {
+	m.jobInfo.phaseInfo.activeVerts = info.activeVerts
+	m.jobInfo.phaseInfo.numVerts = info.numVerts
+	m.jobInfo.phaseInfo.sentMsgs = info.sentMsgs
 	m.jobInfo.totalSentMsgs += m.jobInfo.phaseInfo.sentMsgs
 }
 
@@ -331,11 +333,13 @@ func (m *Master) executePhase(phaseId int) error {
 
 	// once that's taken care of, bump the phase and continue
 	m.currPhase = phaseId
-	m.resetPhaseInfo()
+	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
+	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
+	info := newPhaseInfo()
 	if err := m.sendExecToAllWorkers(m.newPhaseExec(phaseId)); err != nil {
 		return err
 	}
-	m.barrier(m.barrierCh)
+	m.barrier(m.barrierCh, info)
 	var numErrs = 0
 	if m.phaseStatus.errors != nil {
 		numErrs = len(m.phaseStatus.errors)
@@ -362,6 +366,8 @@ func (m *Master) executePhase(phaseId int) error {
 			panic(error)
 		}
 	}
+
+	m.commitPhaseInfo(info)
 
 	return nil
 }
