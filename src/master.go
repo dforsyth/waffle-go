@@ -68,7 +68,7 @@ type Master struct {
 	endTime   int64
 
 	checkpointFn      func(uint64) bool
-	phaseErrorHandler func([]error) bool
+	phaseErrorHandler func(error) bool
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -131,7 +131,7 @@ func NewMaster(addr, port string) *Master {
 	m.checkpointFn = func(superstep uint64) bool {
 		return false
 	}
-	m.phaseErrorHandler = func(errors []error) bool {
+	m.phaseErrorHandler = func(error error) bool {
 		return false
 	}
 	return m
@@ -139,6 +139,10 @@ func NewMaster(addr, port string) *Master {
 
 func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 	m.checkpointFn = fn
+}
+
+func (m *Master) SetPhaseErrorHandler(fn func(error) bool) {
+	m.phaseErrorHandler = fn
 }
 
 // Update the stats from the current step
@@ -350,9 +354,13 @@ func (m *Master) executePhase(phaseId int) (err error) {
 		return errors.New("lost workers during phase") // NewPhaseFailureError("Failed Workers", info.lostWorkers)
 	}
 
+	// if there were any errors on workers during the phase, check to see if we can still commit info (using the phase error handler).
+	// if we cannot, bail
 	if len(info.errors) > 0 {
-		if !m.phaseErrorHandler(info.errors) {
-			return errors.New("phase errors") // NewPhaseErrorsError("Phase Errors", info.errors)
+		for _, error := range info.errors {
+			if !m.phaseErrorHandler(error) {
+				return errors.New("phase errors") // NewPhaseErrorsError("Phase Errors", info.errors)
+			}
 		}
 	}
 
