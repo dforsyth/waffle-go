@@ -44,6 +44,7 @@ func newPhaseInfo() *phaseInfo {
 		activeVerts: 0,
 		numVerts:    0,
 		sentMsgs:    0,
+		lostWorkers: make([]string, 0),
 		errors:      make([]error, 0),
 	}
 }
@@ -355,9 +356,8 @@ func (m *Master) executePhase(phaseId int) (err error) {
 	m.barrier(m.barrierCh, info)
 
 	// if any workers failed during the phase, the phase is invalid
-	failedWorkers := m.failedActiveWorkers()
-	if len(failedWorkers) > 0 {
-		return errors.New("failed workers error") // NewPhaseFailureError("Failed Workers", failedWorkers)	
+	if len(info.lostWorkers) > 0 {
+		return errors.New("lost workers during phase") // NewPhaseFailureError("Failed Workers", info.lostWorkers)
 	}
 
 	if m.phaseStatus.errors != nil && len(m.phaseStatus.errors) > 0 {
