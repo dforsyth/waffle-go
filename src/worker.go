@@ -270,8 +270,8 @@ func (w *Worker) masterEkg() {
 	}
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
-			log.Printf("could not connect to master")
-			panic("Could not reach master")
+			log.Printf("could not connect to master, shutting down")
+			w.done <- 1
 		} else {
 			log.Printf("connected to master")
 			conn.Close()
