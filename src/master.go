@@ -42,6 +42,9 @@ type jobInfo struct {
 	canRegister    bool
 	lastCheckpoint uint64
 	totalSentMsgs  uint64
+	startTime      int64
+	endTime        int64
+	superstep      uint64
 }
 
 type workerInfo struct {
@@ -61,11 +64,13 @@ type Master struct {
 	workerPool map[string]*workerInfo
 	poolLock   sync.RWMutex
 
-	currPhase int
+	phase     int
 	barrierCh chan barrierEntry
-	superstep uint64
-	startTime int64
-	endTime   int64
+	/*
+		superstep uint64
+		startTime int64
+		endTime   int64
+	*/
 
 	checkpointFn      func(uint64) bool
 	phaseErrorHandler func(error) bool
@@ -334,9 +339,9 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 	return &PhaseExec{
 		PhaseId:    phaseId,
 		JobId:      m.Config.JobId,
-		Superstep:  m.superstep,
+		Superstep:  m.jobInfo.superstep,
 		NumVerts:   m.jobInfo.phaseInfo.numVerts,
-		Checkpoint: m.checkpointFn(m.superstep),
+		Checkpoint: m.checkpointFn(m.jobInfo.superstep),
 	}
 }
 
@@ -348,7 +353,7 @@ func (m *Master) executePhase(phaseId int) (err error) {
 	}
 
 	// once that's taken care of, bump the phase and continue
-	m.currPhase = phaseId
+	m.phase = phaseId
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
@@ -373,7 +378,7 @@ func (m *Master) executePhase(phaseId int) (err error) {
 		}
 	}
 
-	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.currPhase, m.jobInfo.phaseInfo.activeVerts,
+	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.phase, m.jobInfo.phaseInfo.activeVerts,
 		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
 
 	m.commitPhaseInfo(info)
@@ -439,11 +444,11 @@ func (m *Master) compute() error {
 	log.Printf("Starting computation")
 
 	log.Printf("Active verts = %d", m.jobInfo.phaseInfo.activeVerts)
-	for m.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.superstep++ {
+	for m.jobInfo.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.jobInfo.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
-		log.Printf("preparing for superstep %d", m.superstep)
+		log.Printf("preparing for superstep %d", m.jobInfo.superstep)
 		m.executePhase(phaseSTEPPREPARE)
-		log.Printf("starting superstep %d", m.superstep)
+		log.Printf("starting superstep %d", m.jobInfo.superstep)
 		m.executePhase(phaseSUPERSTEP)
 	}
 
@@ -490,7 +495,7 @@ func (m *Master) Run() {
 		// Redistribute vertices
 
 		// rollback to the last checkpointed superstep
-		m.superstep = m.Config.StartStep
+		m.jobInfo.superstep = m.Config.StartStep
 		// load vertices from persistence
 		m.executePhase(phaseLOAD3)
 		// redistribute verts? (I think this is actually useless...)
@@ -500,10 +505,10 @@ func (m *Master) Run() {
 		// we should be ready to go now
 	}
 
-	m.startTime = time.Seconds()
+	m.jobInfo.startTime = time.Seconds()
 	m.compute()
-	m.endTime = time.Seconds()
+	m.jobInfo.endTime = time.Seconds()
 	m.executePhase(phaseWRITE)
-	log.Printf("compute time was %d", m.endTime-m.startTime)
+	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
 	m.shutdownWorkers()
 }
