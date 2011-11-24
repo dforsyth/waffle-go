@@ -75,6 +75,8 @@ type Master struct {
 	checkpointFn      func(uint64) bool
 	phaseErrorHandler func(error) bool
 
+	persister Persister
+
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
 }
@@ -181,6 +183,10 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 	m.rpcServ = s
 }
 
+func (m *Master) SetPersister(p Persister) {
+	m.persister = p
+}
+
 // Init RPC
 func (m *Master) startRPC() error {
 	m.rpcServ.Start(m)
@@ -191,8 +197,7 @@ func (m *Master) ekg(info *workerInfo) {
 	hostPort := net.JoinHostPort(info.host, info.port)
 	remote, err := net.ResolveTCPAddr("tcp", hostPort)
 	if err != nil {
-		panic("failed to resolve tcpaddr")
-		// m.barrierCh <- &barrierRemove{workerId: id}
+		panic(err)
 	}
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
@@ -225,6 +230,7 @@ func (m *Master) RegisterWorker(host, port string) (string, error) {
 	log.Printf("Attempting to register %s", hostPort)
 
 	if _, ok := m.workerPool[hostPort]; ok {
+		// duplicate registration is okay
 		log.Printf("%s already in the worker pool, replying with job id", hostPort)
 		return m.Config.JobId, nil
 	}
@@ -303,6 +309,7 @@ func (m *Master) pushTopology() {
 func (m *Master) markWorkerFailed(hostPort string) {
 	m.poolLock.Lock()
 	defer m.poolLock.Unlock()
+
 	if info, ok := m.workerPool[hostPort]; ok {
 		info.failed = true
 	} else {
@@ -382,11 +389,14 @@ func (m *Master) executePhase(phaseId int) (err error) {
 		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
 
 	m.commitPhaseInfo(info)
-	/*
-		if exec.checkpoint {
-			m.logSuccessfulPhase() // for recovery purposes store the last successful checkpointed phase	
+
+	// if this was a checkpoint phase, update the master records
+	if m.phase == phaseSUPERSTEP && m.checkpointFn(m.jobInfo.superstep) {
+		// for recovery purposes store the last successful checkpointed phase
+		if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
+			panic(err)
 		}
-	*/
+	}
 
 	return nil
 }

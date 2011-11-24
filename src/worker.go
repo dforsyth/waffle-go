@@ -316,7 +316,7 @@ func loadPhase3(w *Worker, pe *PhaseExec) error {
 	superstep := pe.Superstep
 	if w.persister != nil {
 		for _, part := range w.partitions {
-			vertices, inbound, err := w.persister.Load(part.id, superstep)
+			vertices, inbound, err := w.persister.LoadPartition(part.id, superstep)
 			if err != nil {
 				return err
 			}
@@ -372,7 +372,7 @@ func step(w *Worker, pe *PhaseExec) error {
 						msgs = append(msgs, vmsgs...)
 					}
 				}
-				if err := w.persister.Persist(pid, superstep, verts, msgs); err != nil {
+				if err := w.persister.PersistPartition(pid, superstep, verts, msgs); err != nil {
 					return err
 				}
 				log.Printf("Persister %d: %d vertices, %d messages", pid, len(verts), len(msgs))

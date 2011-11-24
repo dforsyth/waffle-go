@@ -133,7 +133,7 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 }
 
 var master bool
-var host, port, maddr, loadpath, persistpath string
+var host, port, maddr, loadPath, persistPath string
 var minWorkers uint64
 
 func main() {
@@ -143,13 +143,15 @@ func main() {
 	flag.StringVar(&port, "port", "50000", "node port")
 	flag.StringVar(&host, "host", "127.0.0.1", "node address")
 	flag.Uint64Var(&minWorkers, "minWorkers", 2, "min workers")
-	flag.StringVar(&loadpath, "loadpath", "testdata/testdata.txt", "data load path")
-	flag.StringVar(&persistpath, "persistpath", "persist", "data persist path")
+	flag.StringVar(&loadPath, "loadPath", "testdata/testdata.txt", "data load path")
+	flag.StringVar(&persistPath, "persistPath", "persist", "data persist path")
 
 	flag.Parse()
 
 	gob.Register(&MaxValueVertex{})
 	gob.Register(&MaxValueMsg{})
+
+	persister := waffle.NewGobPersister(persistPath)
 
 	if master {
 		m := waffle.NewMaster(host, port)
@@ -161,8 +163,9 @@ func main() {
 
 		m.SetRpcClient(waffle.NewGobMasterRPCClient())
 		m.SetRpcServer(waffle.NewGobMasterRPCServer())
+		m.SetPersister(persister)
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
-			return false
+			return true
 		})
 		m.Run()
 	} else {
@@ -174,8 +177,8 @@ func main() {
 
 		w.SetRpcClient(waffle.NewGobWorkerRPCClient())
 		w.SetRpcServer(waffle.NewGobWorkerRPCServer())
-		w.SetLoader(&MaxValueLoader{path: loadpath})
-		w.SetPersister(waffle.NewGobPersister(persistpath))
+		w.SetLoader(&MaxValueLoader{path: loadPath})
+		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
 		w.AddCombiner(&MaxValueCombiner{})
 		w.Run()
