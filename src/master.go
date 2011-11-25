@@ -66,11 +66,6 @@ type Master struct {
 
 	phase     int
 	barrierCh chan barrierEntry
-	/*
-		superstep uint64
-		startTime int64
-		endTime   int64
-	*/
 
 	checkpointFn      func(uint64) bool
 	phaseErrorHandler func(error) bool

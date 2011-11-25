@@ -2,12 +2,6 @@ package waffle
 
 import ()
 
-type Node interface {
-	InitNode(string, string)
-	Run()
-	SetVertexPartitionFn(func(string, uint64) uint64) // Drop this setter and expose partFn?
-}
-
 type node struct {
 	host         string
 	port         string
@@ -39,6 +33,6 @@ func (n *node) partitionOf(id string) uint64 {
 	return n.partFn(id, uint64(len(n.partitionMap)))
 }
 
-func (n *node) SetVertexPartitionFn(fn func(string, uint64) uint64) {
+func (n *node) SetPartitionFn(fn func(string, uint64) uint64) {
 	n.partFn = fn
 }

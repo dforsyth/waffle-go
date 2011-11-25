@@ -107,5 +107,6 @@ func (p *GobPersister) LoadMaster(superstep uint64) (map[uint64]string, error) {
 	if err := dec.Decode(partitions); err != nil {
 		return nil, err
 	}
+	log.Printf("Decoded master info for superstep %d (%d partitions) from %s", superstep, len(partitions), filePath)
 	return partitions, nil
 }
