@@ -24,6 +24,7 @@ type phaseStat struct {
 	startTime int64
 	endTime   int64
 	errors    []error
+	// should sentMsgs be in here?
 }
 
 func (s *phaseStat) reset() {
@@ -350,6 +351,32 @@ func stepPrepare(w *Worker, pe *PhaseExec) error {
 	return nil
 }
 
+func (w *Worker) persistPartitions() (err error) {
+	if w.persister == nil {
+		log.Printf("worker %s has no persister", w.WorkerId())
+		return
+	}
+
+	verts, msgs := make([]Vertex, 0), make([]Msg, 0)
+	for pid, part := range w.partitions {
+		verts = verts[0:0]
+		msgs = msgs[0:0]
+		for _, vlist := range part.verts {
+			verts = append(verts, vlist)
+		}
+		for _, v := range verts {
+			if vmsgs := w.msgs.msgs(v.VertexId()); vmsgs != nil {
+				msgs = append(msgs, vmsgs...)
+			}
+		}
+		if err = w.persister.PersistPartition(pid, w.stepInfo.superstep, verts, msgs); err != nil {
+			return
+		}
+		log.Printf("partition %d, superstep %d: persisted %d vertices, %d messages", pid, w.stepInfo.superstep, len(verts), len(msgs))
+	}
+	return
+}
+
 // Execute a single superstep
 func step(w *Worker, pe *PhaseExec) error {
 	superstep, checkpoint := pe.Superstep, pe.Checkpoint
@@ -357,33 +384,14 @@ func step(w *Worker, pe *PhaseExec) error {
 		return errors.New("Superstep did not increment by one")
 	}
 
-	if checkpoint {
-		if w.persister != nil {
-			verts := make([]Vertex, 0)
-			msgs := make([]Msg, 0)
-			for pid, part := range w.partitions {
-				verts = verts[0:0]
-				msgs = msgs[0:0]
-				for _, vlist := range part.verts {
-					verts = append(verts, vlist)
-				}
-				for _, v := range verts {
-					if vmsgs := w.msgs.msgs(v.VertexId()); vmsgs != nil {
-						msgs = append(msgs, vmsgs...)
-					}
-				}
-				if err := w.persister.PersistPartition(pid, superstep, verts, msgs); err != nil {
-					return err
-				}
-				log.Printf("Persister %d: %d vertices, %d messages", pid, len(verts), len(msgs))
-			}
-		} else {
-			log.Printf("worker %s has no persister", w.WorkerId())
-		}
-	}
-
 	// set the step info fields for superstep and checkpoint
 	w.stepInfo.superstep, w.stepInfo.checkpoint = superstep, checkpoint
+
+	if w.stepInfo.checkpoint {
+		if err := w.persistPartitions(); err != nil {
+			return err
+		}
+	}
 
 	var wg sync.WaitGroup
 	// XXX limit max routines?
