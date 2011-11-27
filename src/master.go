@@ -385,14 +385,6 @@ func (m *Master) executePhase(phaseId int) (err error) {
 
 	m.commitPhaseInfo(info)
 
-	// if this was a checkpoint phase, update the master records
-	if m.phase == phaseSUPERSTEP && m.checkpointFn(m.jobInfo.superstep) {
-		// for recovery purposes store the last successful checkpointed phase
-		if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
-			panic(err)
-		}
-	}
-
 	return nil
 }
 
@@ -455,6 +447,11 @@ func (m *Master) compute() error {
 		m.executePhase(phaseSTEPPREPARE)
 		log.Printf("starting superstep %d", m.jobInfo.superstep)
 		m.executePhase(phaseSUPERSTEP)
+		if m.checkpointFn(m.jobInfo.superstep) {
+			if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
+				return err
+			}
+		}
 	}
 
 	log.Printf("Computation complete")
