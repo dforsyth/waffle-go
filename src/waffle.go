@@ -6,15 +6,15 @@ const (
 )
 
 const (
-	phaseREGISTER = iota
-	phaseLOAD1
-	phaseLOAD2
-	phaseLOAD3 // load from persistence
-	phaseSTEPPREPARE
-	phaseSUPERSTEP
-	phaseWRITE
-	phaseRECOVER
-	phaseFAILURE
+	PHASE_REGISTER = iota
+	PHASE_LOAD_DATA
+	PHASE_DISTRIBUTE_VERTICES
+	PHASE_LOAD_PERSISTED // load from persistence
+	PHASE_STEP_PREPARE
+	PHASE_SUPERSTEP
+	PHASE_WRITE_RESULTS
+	PHASE_RECOVER
+	PHASE_FAILURE
 )
 
 type WorkerError struct {
