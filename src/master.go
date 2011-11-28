@@ -254,6 +254,7 @@ func (m *Master) registerWorkers() error {
 		(m.Config.RegisterWait > 0 && int64(timer) < m.Config.RegisterWait); timer += 1 * 1e9 {
 		<-time.After(1 * 1e9)
 	}
+
 	m.jobInfo.canRegister = false
 
 	if len(m.workerPool) == 0 || uint64(len(m.workerPool)) < m.Config.MinWorkers && m.Config.RegisterWait > 0 {
@@ -444,9 +445,9 @@ func (m *Master) compute() error {
 	for m.jobInfo.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.jobInfo.superstep++ {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		log.Printf("preparing for superstep %d", m.jobInfo.superstep)
-		m.executePhase(phaseSTEPPREPARE)
+		m.executePhase(PHASE_STEP_PREPARE)
 		log.Printf("starting superstep %d", m.jobInfo.superstep)
-		m.executePhase(phaseSUPERSTEP)
+		m.executePhase(PHASE_SUPERSTEP)
 		if m.checkpointFn(m.jobInfo.superstep) {
 			if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
 				return err
@@ -487,8 +488,8 @@ func (m *Master) Run() {
 	m.pushTopology()
 
 	if m.Config.StartStep == 0 {
-		m.executePhase(phaseLOAD1)
-		m.executePhase(phaseLOAD2)
+		m.executePhase(PHASE_LOAD_DATA)
+		m.executePhase(PHASE_DISTRIBUTE_VERTICES)
 	} else {
 		// This is a restart
 		// Find the last checkpointed step for this job
@@ -499,18 +500,18 @@ func (m *Master) Run() {
 		// rollback to the last checkpointed superstep
 		m.jobInfo.superstep = m.Config.StartStep
 		// load vertices from persistence
-		m.executePhase(phaseLOAD3)
+		m.executePhase(PHASE_LOAD_PERSISTED)
 		// redistribute verts? (I think this is actually useless...)
-		m.executePhase(phaseLOAD2)
+		m.executePhase(PHASE_DISTRIBUTE_VERTICES)
 		// set the superstep on workers
-		m.executePhase(phaseRECOVER)
+		m.executePhase(PHASE_RECOVER)
 		// we should be ready to go now
 	}
 
 	m.jobInfo.startTime = time.Seconds()
 	m.compute()
 	m.jobInfo.endTime = time.Seconds()
-	m.executePhase(phaseWRITE)
+	m.executePhase(PHASE_WRITE_RESULTS)
 	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
 	m.shutdownWorkers()
 }

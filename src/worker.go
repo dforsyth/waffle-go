@@ -11,13 +11,13 @@ import (
 type phaseFn func(*Worker, *PhaseExec) error
 
 var phaseMap map[int]phaseFn = map[int]phaseFn{
-	phaseLOAD1:       loadPhase1,
-	phaseLOAD2:       loadPhase2,
-	phaseLOAD3:       loadPhase3,
-	phaseRECOVER:     recover,
-	phaseSTEPPREPARE: stepPrepare,
-	phaseSUPERSTEP:   step,
-	phaseWRITE:       writeResults,
+	PHASE_LOAD_DATA:           loadData,
+	PHASE_DISTRIBUTE_VERTICES: distributeVertices,
+	PHASE_LOAD_PERSISTED:      loadPersisted,
+	PHASE_RECOVER:             recover,
+	PHASE_STEP_PREPARE:        stepPrepare,
+	PHASE_SUPERSTEP:           step,
+	PHASE_WRITE_RESULTS:       writeResults,
 }
 
 type phaseStat struct {
@@ -290,7 +290,7 @@ func (w *Worker) cleanup() error {
 	return nil
 }
 
-func loadPhase1(w *Worker, pe *PhaseExec) error {
+func loadData(w *Worker, pe *PhaseExec) error {
 	if w.loader != nil {
 		if loaded, err := w.loader.Load(w); err != nil {
 			return err
@@ -305,7 +305,7 @@ func loadPhase1(w *Worker, pe *PhaseExec) error {
 	return nil
 }
 
-func loadPhase2(w *Worker, pe *PhaseExec) error {
+func distributeVertices(w *Worker, pe *PhaseExec) error {
 	for _, v := range w.vinq.verts {
 		w.AddVertex(v)
 	}
@@ -313,7 +313,7 @@ func loadPhase2(w *Worker, pe *PhaseExec) error {
 }
 
 // load from persistence
-func loadPhase3(w *Worker, pe *PhaseExec) error {
+func loadPersisted(w *Worker, pe *PhaseExec) error {
 	superstep := pe.Superstep
 	if w.persister != nil {
 		for _, part := range w.partitions {
