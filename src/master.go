@@ -13,7 +13,6 @@ type MasterConfig struct {
 	RegisterWait           int64
 	MinPartitionsPerWorker uint64
 	HeartbeatInterval      int64
-	HeartbeatTimeout       int64
 	MaxSteps               uint64
 	JobId                  string
 	StartStep              uint64
@@ -144,6 +143,12 @@ func NewMaster(addr, port string) *Master {
 	m.phaseErrorHandler = func(error error) bool {
 		return false
 	}
+
+	// default configs
+	m.Config.HeartbeatInterval = DEFAULT_HEARTBEAT_INTERVAL
+	m.Config.MaxSteps = DEFAULT_MAX_STEPS
+	m.Config.MinPartitionsPerWorker = DEFAULT_MIN_PARTITIONS_PER_WORKER
+	m.Config.MinWorkers = DEFAULT_MIN_WORKERS
 	return m
 }
 
@@ -248,7 +253,6 @@ func (m *Master) registerWorkers() error {
 
 	m.workerPool = make(map[string]*workerInfo)
 
-	// Should do this in a more Go-ish way, maybe with a select statement?
 	m.jobInfo.canRegister = true
 	for timer := 0; (m.Config.MinWorkers > 0 && uint64(len(m.workerPool)) < m.Config.MinWorkers) ||
 		(m.Config.RegisterWait > 0 && int64(timer) < m.Config.RegisterWait); timer += 1 * 1e9 {
@@ -443,6 +447,11 @@ func (m *Master) compute() error {
 
 	log.Printf("Active verts = %d", m.jobInfo.phaseInfo.activeVerts)
 	for m.jobInfo.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.jobInfo.superstep++ {
+		if m.Config.MaxSteps > 0 && !(m.jobInfo.superstep < m.Config.MaxSteps) {
+			log.Println("hit max steps, breaking computation loop")
+			break
+		}
+
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		log.Printf("preparing for superstep %d", m.jobInfo.superstep)
 		m.executePhase(PHASE_STEP_PREPARE)

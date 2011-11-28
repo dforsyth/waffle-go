@@ -1,8 +1,11 @@
 package waffle
 
 const (
-	WAFFLE_VERSION            = "0.0.0"
-	DEFAULT_HEARTBEAT_TIMEOUT = 8 * 1e9
+	WAFFLE_VERSION                    = "0.0.0"
+	DEFAULT_HEARTBEAT_INTERVAL        = 8 * 1e9
+	DEFAULT_MAX_STEPS                 = 0
+	DEFAULT_MIN_PARTITIONS_PER_WORKER = 1
+	DEFAULT_MIN_WORKERS               = 1
 )
 
 const (
