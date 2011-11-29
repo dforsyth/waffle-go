@@ -202,7 +202,7 @@ func (m *Master) ekg(info *workerInfo) {
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
 			log.Printf("worker %s could not be dialed", hostPort)
-			m.barrierCh <- &barrierRemove{hostPort: hostPort}
+			m.markWorkerFailed(hostPort)
 		} else {
 			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
@@ -295,7 +295,7 @@ func (m *Master) pushTopology() {
 		wg.Add(1)
 		go func() {
 			if err := m.rpcClient.PushTopology(hp, topInfo); err != nil {
-				panic(err)
+				m.markWorkerFailed(hp)
 			}
 			wg.Done()
 		}()
@@ -312,6 +312,7 @@ func (m *Master) markWorkerFailed(hostPort string) {
 
 	if info, ok := m.workerPool[hostPort]; ok {
 		info.failed = true
+		m.barrierCh <- &barrierRemove{hostPort: hostPort}
 	} else {
 		log.Printf("cannot find %s in the worker pool to mark as failed", hostPort)
 	}
@@ -352,39 +353,45 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 	}
 }
 
-func (m *Master) executePhase(phaseId int) (err error) {
+func (m *Master) executePhase(phaseId int) []error {
+	/* 
+	 * - check for failed workers, remove them from the pool and move their partitions to live workers
+	 * - generate the phase execution order, and send it to all workers
+	 * - throw up a barrier and wait
+	 * - once the barrier constraints are met, check to see if any errors occured or if their were any workers lost in the phase.
+	 * if there were, do not commit the phase info, otherwise commit.
+	 */
+
 	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
-	if err = m.purgeFailedWorkers(); err != nil {
+	if err := m.purgeFailedWorkers(); err != nil {
 		log.Println(err)
-		return
+		return []error{err}
 	}
 
-	// once that's taken care of, bump the phase and continue
+	// bump the phase and continue
 	m.phase = phaseId
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
 	exec := m.newPhaseExec(phaseId)
-	if err = m.sendExecToAllWorkers(exec); err != nil {
-		return
-	}
+	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh, info)
 
-	// if any workers failed during the phase, the phase is invalid
+	// Collect errors that occured during the phase.  Create errors for lost workers (for reporting)
+	phaseErrors := make([]error, 0)
 	if len(info.lostWorkers) > 0 {
-		return errors.New("lost workers during phase") // NewPhaseFailureError("Failed Workers", info.lostWorkers)
-	}
-
-	// if there were any errors on workers during the phase, check to see if we can still commit info (using the phase error handler).
-	// if we cannot, bail
-	if len(info.errors) > 0 {
-		for _, error := range info.errors {
-			if !m.phaseErrorHandler(error) {
-				return errors.New("phase errors") // NewPhaseErrorsError("Phase Errors", info.errors)
-			}
+		for _, hostPort := range info.lostWorkers {
+			phaseErrors = append(phaseErrors, errors.New(hostPort)) // TODO: create an error type for this
 		}
 	}
+	if len(info.errors) > 0 {
+		phaseErrors = append(phaseErrors, info.errors...)
+	}
+	if len(phaseErrors) > 0 {
+		return phaseErrors
+	}
 
+	// There are no errors occured during the phase, commit the phase info the overall job info
 	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.phase, m.jobInfo.phaseInfo.activeVerts,
 		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
 

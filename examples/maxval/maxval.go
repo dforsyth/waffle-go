@@ -54,6 +54,10 @@ func (l *MaxValueLoader) Load(w *waffle.Worker) (loaded uint64, err error) {
 		if line, err = reader.ReadString('\n'); err != nil {
 			break
 		}
+		if line[0] == '#' {
+			// comment line
+			continue
+		}
 		split := strings.Split(line, "\t")
 		v := vertexBuilder(split[0], split[1])
 		if v == nil {
