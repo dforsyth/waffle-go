@@ -53,6 +53,7 @@ type PhaseExec struct {
 	Checkpoint  bool
 	NumVerts    uint64
 	ActiveVerts uint64
+	Options     map[string]interface{}
 }
 
 type PhaseSummary struct {

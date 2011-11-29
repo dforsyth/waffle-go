@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+const (
+	OPTION_LOAD_ASSIGNMENT = "loadAssignment"
+)
+
 type MasterConfig struct {
 	MinWorkers             uint64
 	RegisterWait           int64
@@ -70,6 +74,8 @@ type Master struct {
 	phaseErrorHandler func(error) bool
 
 	persister Persister
+
+	filesToLoad []string
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -185,6 +191,11 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 
 func (m *Master) SetPersister(p Persister) {
 	m.persister = p
+}
+
+// XXX Temp until I decide if I want a directory reader interface
+func (m *Master) SetLoadFiles(files []string) {
+	m.filesToLoad = files
 }
 
 // Init RPC
@@ -350,6 +361,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 		Superstep:  m.jobInfo.superstep,
 		NumVerts:   m.jobInfo.phaseInfo.numVerts,
 		Checkpoint: m.checkpointFn(m.jobInfo.superstep),
+		Options:    make(map[string]interface{}),
 	}
 }
 
@@ -374,6 +386,20 @@ func (m *Master) executePhase(phaseId int) []error {
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
 	exec := m.newPhaseExec(phaseId)
+
+	// XXX ghetto for testing
+	if m.phase == PHASE_LOAD_DATA {
+		assign := make(map[string][]string)
+		for hostPort := range m.workerPool {
+			assign[hostPort] = m.filesToLoad
+			for _, path := range assign[hostPort] {
+				log.Printf("assigned loading: %s -> %s", path, hostPort)
+			}
+			break
+		}
+		exec.Options[OPTION_LOAD_ASSIGNMENT] = assign
+	}
+
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh, info)
 
@@ -388,6 +414,7 @@ func (m *Master) executePhase(phaseId int) []error {
 		phaseErrors = append(phaseErrors, info.errors...)
 	}
 	if len(phaseErrors) > 0 {
+		panic("phase errors") // until this function is properly handled...
 		return phaseErrors
 	}
 
@@ -469,6 +496,7 @@ func (m *Master) compute() error {
 				return err
 			}
 		}
+		log.Printf("superstep complete: %d active verts, %d sent messages", m.jobInfo.phaseInfo.activeVerts, m.jobInfo.phaseInfo.sentMsgs)
 	}
 
 	log.Printf("Computation complete")
@@ -529,5 +557,6 @@ func (m *Master) Run() {
 	m.jobInfo.endTime = time.Seconds()
 	m.executePhase(PHASE_WRITE_RESULTS)
 	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
+	log.Printf("total sent messages was %d", m.jobInfo.totalSentMsgs)
 	m.shutdownWorkers()
 }

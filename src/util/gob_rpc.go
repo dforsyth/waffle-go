@@ -29,6 +29,7 @@ func (c *GobRPCClientBase) init() {
 	gob.Register(&EdgeBase{})
 	gob.Register(&MsgBase{})
 	gob.Register(&WorkerError{})
+	gob.Register(make(map[string][]string)) // uh... this is probably not going to stick around...
 }
 
 type GobMasterRPCClient struct {

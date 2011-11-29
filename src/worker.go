@@ -195,6 +195,7 @@ func (w *Worker) executePhase(phaseFn phaseFn, exec *PhaseExec) {
 	w.phaseStats.end()
 	if err := w.sendSummary(exec.PhaseId); err != nil {
 		// handle summary send failure
+		panic(err)
 	}
 }
 
@@ -291,17 +292,36 @@ func (w *Worker) cleanup() error {
 }
 
 func loadData(w *Worker, pe *PhaseExec) error {
-	if w.loader != nil {
-		if loaded, err := w.loader.Load(w); err != nil {
+	var assignments map[string][]string
+	var ok bool
+	if assignments, ok = pe.Options[OPTION_LOAD_ASSIGNMENT].(map[string][]string); !ok || len(assignments) == 0 {
+		log.Printf("no load assignments in phase exec", w.WorkerId())
+		return nil
+	}
+
+	var thisWorker []string
+	if thisWorker, ok = assignments[w.WorkerId()]; !ok {
+		log.Printf("no load assignments for worker %s", w.WorkerId())
+		return nil
+	}
+
+	if w.loader == nil {
+		return errors.New("No loader to load assignment on worker " + w.WorkerId())
+	}
+
+	var totalLoaded uint64 = 0
+	for _, path := range thisWorker {
+		if loaded, err := w.loader.Load(w, path); err != nil {
+			log.Printf("Error loading data: %v", err)
 			return err
 		} else {
-			log.Printf("loaded %d vertices", loaded)
-			w.voutq.flush()
-			w.voutq.wait.Wait()
+			totalLoaded += loaded
 		}
-	} else {
-		log.Printf("worker %s has no loader", w.WorkerId())
 	}
+
+	log.Printf("loaded %d vertices", totalLoaded)
+	w.voutq.flush()
+	w.voutq.wait.Wait()
 	return nil
 }
 

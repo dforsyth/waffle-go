@@ -7,8 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"log"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +31,7 @@ type MaxValueMsg struct {
 
 // Load vertices from generated data file
 type MaxValueLoader struct {
-	path string
+	basePath string
 }
 
 func vertexBuilder(id, val string) *MaxValueVertex {
@@ -42,9 +45,9 @@ func vertexBuilder(id, val string) *MaxValueVertex {
 	return v
 }
 
-func (l *MaxValueLoader) Load(w *waffle.Worker) (loaded uint64, err error) {
+func (l *MaxValueLoader) Load(w *waffle.Worker, filePath string) (loaded uint64, err error) {
 	var file *os.File
-	if file, err = os.Open(l.path); err != nil {
+	if file, err = os.Open(path.Join(l.basePath, filePath)); err != nil {
 		return 0, err
 	}
 	reader := bufio.NewReader(file)
@@ -137,8 +140,27 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 }
 
 var master bool
-var host, port, maddr, loadPath, persistPath string
+var host, port, maddr, loadDir, persistDir string
 var minWorkers uint64
+
+func filesToLoad(dir string) ([]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0)
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name, ".data") {
+			continue
+		}
+		paths = append(paths, file.Name)
+	}
+	log.Println("files to load:")
+	for _, path := range paths {
+		log.Printf("->%s", path)
+	}
+	return paths, nil
+}
 
 func main() {
 
@@ -147,15 +169,15 @@ func main() {
 	flag.StringVar(&port, "port", "50000", "node port")
 	flag.StringVar(&host, "host", "127.0.0.1", "node address")
 	flag.Uint64Var(&minWorkers, "minWorkers", 2, "min workers")
-	flag.StringVar(&loadPath, "loadPath", "testdata/testdata.txt", "data load path")
-	flag.StringVar(&persistPath, "persistPath", "persist", "data persist path")
+	flag.StringVar(&loadDir, "loadDir", "testdata", "data load path")
+	flag.StringVar(&persistDir, "persistDir", "persist", "data persist path")
 
 	flag.Parse()
 
 	gob.Register(&MaxValueVertex{})
 	gob.Register(&MaxValueMsg{})
 
-	persister := waffle.NewGobPersister(persistPath)
+	persister := waffle.NewGobPersister(persistDir)
 
 	if master {
 		m := waffle.NewMaster(host, port)
@@ -168,8 +190,13 @@ func main() {
 		m.SetRpcServer(waffle.NewGobMasterRPCServer())
 		m.SetPersister(persister)
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
-			return true
+			return false
 		})
+		if paths, err := filesToLoad(loadDir); err != nil {
+			panic(err)
+		} else {
+			m.SetLoadFiles(paths)
+		}
 		m.Run()
 	} else {
 		w := waffle.NewWorker(host, port)
@@ -180,7 +207,7 @@ func main() {
 
 		w.SetRpcClient(waffle.NewGobWorkerRPCClient())
 		w.SetRpcServer(waffle.NewGobWorkerRPCServer())
-		w.SetLoader(&MaxValueLoader{path: loadPath})
+		w.SetLoader(&MaxValueLoader{basePath: loadDir})
 		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
 		w.AddCombiner(&MaxValueCombiner{})
