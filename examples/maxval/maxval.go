@@ -34,6 +34,21 @@ type MaxValueLoader struct {
 	basePath string
 }
 
+func (l *MaxValueLoader) AssignLoad(workers []string, files []string) map[string][]string {
+	assign := make(map[string][]string)
+
+	// XXX ghetto for testing
+	for _, hostPort := range workers {
+		assign[hostPort] = files
+		for _, path := range assign[hostPort] {
+			log.Printf("assigned loading: %s -> %s", path, hostPort)
+		}
+		break
+	}
+
+	return assign
+}
+
 func vertexBuilder(id, val string) *MaxValueVertex {
 	v := &MaxValueVertex{}
 	v.SetVertexId(strings.TrimSpace(id))
@@ -178,6 +193,7 @@ func main() {
 	gob.Register(&MaxValueMsg{})
 
 	persister := waffle.NewGobPersister(persistDir)
+	loader := &MaxValueLoader{basePath: loadDir}
 
 	if master {
 		m := waffle.NewMaster(host, port)
@@ -189,6 +205,7 @@ func main() {
 		m.SetRpcClient(waffle.NewGobMasterRPCClient())
 		m.SetRpcServer(waffle.NewGobMasterRPCServer())
 		m.SetPersister(persister)
+		m.SetLoader(loader)
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
 			return false
 		})
@@ -207,7 +224,7 @@ func main() {
 
 		w.SetRpcClient(waffle.NewGobWorkerRPCClient())
 		w.SetRpcServer(waffle.NewGobWorkerRPCServer())
-		w.SetLoader(&MaxValueLoader{basePath: loadDir})
+		w.SetLoader(loader)
 		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
 		w.AddCombiner(&MaxValueCombiner{})

@@ -74,6 +74,7 @@ type Master struct {
 	phaseErrorHandler func(error) bool
 
 	persister Persister
+	loader    Loader
 
 	filesToLoad []string
 
@@ -196,6 +197,10 @@ func (m *Master) SetPersister(p Persister) {
 // XXX Temp until I decide if I want a directory reader interface
 func (m *Master) SetLoadFiles(files []string) {
 	m.filesToLoad = files
+}
+
+func (m *Master) SetLoader(loader Loader) {
+	m.loader = loader
 }
 
 // Init RPC
@@ -389,15 +394,11 @@ func (m *Master) executePhase(phaseId int) []error {
 
 	// XXX ghetto for testing
 	if m.phase == PHASE_LOAD_DATA {
-		assign := make(map[string][]string)
+		var workers []string
 		for hostPort := range m.workerPool {
-			assign[hostPort] = m.filesToLoad
-			for _, path := range assign[hostPort] {
-				log.Printf("assigned loading: %s -> %s", path, hostPort)
-			}
-			break
+			workers = append(workers, hostPort)
 		}
-		exec.Options[OPTION_LOAD_ASSIGNMENT] = assign
+		exec.Options[OPTION_LOAD_ASSIGNMENT] = m.loader.AssignLoad(workers, m.filesToLoad)
 	}
 
 	m.sendExecToAllWorkers(exec)
