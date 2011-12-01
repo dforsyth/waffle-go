@@ -34,9 +34,37 @@ type MaxValueLoader struct {
 	basePath string
 }
 
-func (l *MaxValueLoader) AssignLoad(workers []string, files []string) map[string][]string {
-	assign := make(map[string][]string)
+func filesToLoad(dir string) ([]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 
+	var paths []string
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name, ".data") {
+			continue
+		}
+		paths = append(paths, file.Name)
+	}
+	log.Println("files to load:")
+	for _, path := range paths {
+		log.Printf("->%s", path)
+	}
+	return paths, nil
+}
+
+func (l *MaxValueLoader) AssignLoad(workers []string, loadPaths []string) map[string][]string {
+	var files []string
+	for _, path := range loadPaths {
+		paths, err := filesToLoad(path)
+		if err != nil {
+			panic(err)
+		}
+		files = append(files, paths...)
+	}
+
+	assign := make(map[string][]string)
 	// XXX ghetto for testing
 	for _, hostPort := range workers {
 		assign[hostPort] = files
@@ -158,25 +186,6 @@ var master bool
 var host, port, maddr, loadDir, persistDir string
 var minWorkers uint64
 
-func filesToLoad(dir string) ([]string, error) {
-	files, err := ioutil.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, 0)
-	for _, file := range files {
-		if !strings.HasSuffix(file.Name, ".data") {
-			continue
-		}
-		paths = append(paths, file.Name)
-	}
-	log.Println("files to load:")
-	for _, path := range paths {
-		log.Printf("->%s", path)
-	}
-	return paths, nil
-}
-
 func main() {
 
 	flag.BoolVar(&master, "master", false, "node is master")
@@ -209,11 +218,7 @@ func main() {
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
 			return false
 		})
-		if paths, err := filesToLoad(loadDir); err != nil {
-			panic(err)
-		} else {
-			m.SetLoadFiles(paths)
-		}
+		m.Config.LoadPaths = []string{loadDir}
 		m.Run()
 	} else {
 		w := waffle.NewWorker(host, port)

@@ -20,6 +20,7 @@ type MasterConfig struct {
 	MaxSteps               uint64
 	JobId                  string
 	StartStep              uint64
+	LoadPaths              []string
 }
 
 type phaseInfo struct {
@@ -75,8 +76,6 @@ type Master struct {
 
 	persister Persister
 	loader    Loader
-
-	filesToLoad []string
 
 	rpcServ   MasterRpcServer
 	rpcClient MasterRpcClient
@@ -192,11 +191,6 @@ func (m *Master) SetRpcServer(s MasterRpcServer) {
 
 func (m *Master) SetPersister(p Persister) {
 	m.persister = p
-}
-
-// XXX Temp until I decide if I want a directory reader interface
-func (m *Master) SetLoadFiles(files []string) {
-	m.filesToLoad = files
 }
 
 func (m *Master) SetLoader(loader Loader) {
@@ -398,7 +392,7 @@ func (m *Master) executePhase(phaseId int) []error {
 		for hostPort := range m.workerPool {
 			workers = append(workers, hostPort)
 		}
-		exec.Options[OPTION_LOAD_ASSIGNMENT] = m.loader.AssignLoad(workers, m.filesToLoad)
+		exec.Options[OPTION_LOAD_ASSIGNMENT] = m.loader.AssignLoad(workers, m.Config.LoadPaths)
 	}
 
 	m.sendExecToAllWorkers(exec)
