@@ -341,7 +341,7 @@ func (m *Master) failedActiveWorkers() []*workerInfo {
 	return failed
 }
 
-func (m *Master) sendExecToAllWorkers(exec *PhaseExec) error {
+func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 	for hostPort := range m.workerPool {
 		hp := hostPort
 		go func() {
@@ -350,7 +350,6 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) error {
 			}
 		}()
 	}
-	return nil
 }
 
 func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
