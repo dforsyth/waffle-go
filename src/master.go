@@ -330,19 +330,6 @@ func (m *Master) markWorkerFailed(hostPort, message string) {
 	}
 }
 
-// Workers that are marked as failed but still in the worker pool
-func (m *Master) failedActiveWorkers() []*workerInfo {
-	m.poolLock.RLock()
-	defer m.poolLock.RUnlock()
-	failed := make([]*workerInfo, 0)
-	for _, info := range m.workerPool {
-		if info.failed {
-			failed = append(failed, info)
-		}
-	}
-	return failed
-}
-
 func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 	for hostPort := range m.workerPool {
 		hp := hostPort
