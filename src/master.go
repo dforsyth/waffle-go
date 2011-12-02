@@ -68,8 +68,7 @@ type Master struct {
 	phase     int
 	barrierCh chan barrierEntry
 
-	checkpointFn      func(uint64) bool
-	phaseErrorHandler func(error) bool
+	checkpointFn func(uint64) bool
 
 	persister Persister
 	loader    Loader
@@ -143,9 +142,6 @@ func NewMaster(addr, port string) *Master {
 	m.checkpointFn = func(superstep uint64) bool {
 		return false
 	}
-	m.phaseErrorHandler = func(error error) bool {
-		return false
-	}
 
 	// default configs
 	m.Config.HeartbeatInterval = DEFAULT_HEARTBEAT_INTERVAL
@@ -157,10 +153,6 @@ func NewMaster(addr, port string) *Master {
 
 func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 	m.checkpointFn = fn
-}
-
-func (m *Master) SetPhaseErrorHandler(fn func(error) bool) {
-	m.phaseErrorHandler = fn
 }
 
 // Update the stats from the current step
