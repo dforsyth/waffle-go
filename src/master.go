@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-const (
-	OPTION_LOAD_ASSIGNMENT = "loadAssignment"
-)
-
 type MasterConfig struct {
 	MinWorkers             uint64
 	RegisterWait           int64
@@ -55,6 +51,7 @@ type workerInfo struct {
 	host          string
 	port          string
 	failed        bool
+	errorMsg      string
 	lastHeartbeat int64
 	heartbeatCh   chan byte
 }
@@ -212,7 +209,7 @@ func (m *Master) ekg(info *workerInfo) {
 	for {
 		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
 			log.Printf("worker %s could not be dialed", hostPort)
-			m.markWorkerFailed(hostPort)
+			m.markWorkerFailed(hostPort, "Could not be dialed")
 		} else {
 			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
@@ -298,14 +295,25 @@ func (m *Master) determinePartitions() {
 func (m *Master) pushTopology() {
 	log.Printf("Distributing topology information")
 
-	topInfo := &TopologyInfo{JobId: m.Config.JobId, PartitionMap: m.partitionMap}
+	var workers []string
+	for worker := range m.workerPool {
+		workers = append(workers, worker)
+	}
+	la := m.loader.AssignLoad(workers, m.Config.LoadPaths)
+
+	topInfo := &TopologyInfo{
+		JobId:           m.Config.JobId,
+		PartitionMap:    m.partitionMap,
+		LoadAssignments: la,
+	}
+
 	var wg sync.WaitGroup
 	for hostPort := range m.workerPool {
 		hp := hostPort
 		wg.Add(1)
 		go func() {
 			if err := m.rpcClient.PushTopology(hp, topInfo); err != nil {
-				m.markWorkerFailed(hp)
+				m.markWorkerFailed(hp, err.Error())
 			}
 			wg.Done()
 		}()
@@ -316,15 +324,17 @@ func (m *Master) pushTopology() {
 }
 
 // Mark worker hostPort as failed
-func (m *Master) markWorkerFailed(hostPort string) {
+func (m *Master) markWorkerFailed(hostPort, message string) {
 	m.poolLock.Lock()
 	defer m.poolLock.Unlock()
 
 	if info, ok := m.workerPool[hostPort]; ok {
+		log.Printf("marking %d as failed (%s)", hostPort, message)
 		info.failed = true
+		info.errorMsg = message
 		m.barrierCh <- &barrierRemove{hostPort: hostPort}
 	} else {
-		log.Printf("cannot find %s in the worker pool to mark as failed", hostPort)
+		log.Printf("cannot find %s in the worker pool to mark as failed (%s)", hostPort, message)
 	}
 }
 
@@ -346,7 +356,7 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 		hp := hostPort
 		go func() {
 			if err := m.rpcClient.ExecutePhase(hp, exec); err != nil {
-				m.markWorkerFailed(hp)
+				m.markWorkerFailed(hp, err.Error())
 			}
 		}()
 	}
@@ -359,7 +369,6 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 		Superstep:  m.jobInfo.superstep,
 		NumVerts:   m.jobInfo.phaseInfo.numVerts,
 		Checkpoint: m.checkpointFn(m.jobInfo.superstep),
-		Options:    make(map[string]interface{}),
 	}
 }
 
@@ -384,15 +393,6 @@ func (m *Master) executePhase(phaseId int) []error {
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
 	exec := m.newPhaseExec(phaseId)
-
-	// XXX ghetto for testing
-	if m.phase == PHASE_LOAD_DATA {
-		var workers []string
-		for hostPort := range m.workerPool {
-			workers = append(workers, hostPort)
-		}
-		exec.Options[OPTION_LOAD_ASSIGNMENT] = m.loader.AssignLoad(workers, m.Config.LoadPaths)
-	}
 
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh, info)

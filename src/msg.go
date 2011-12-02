@@ -42,8 +42,9 @@ type RegisterResp struct {
 }
 
 type TopologyInfo struct {
-	JobId        string
-	PartitionMap map[uint64]string
+	JobId           string
+	PartitionMap    map[uint64]string
+	LoadAssignments map[string][]string
 }
 
 type PhaseExec struct {
@@ -53,7 +54,6 @@ type PhaseExec struct {
 	Checkpoint  bool
 	NumVerts    uint64
 	ActiveVerts uint64
-	Options     map[string]interface{}
 }
 
 type PhaseSummary struct {
@@ -66,7 +66,6 @@ type PhaseSummary struct {
 	SentVerts   uint64
 	SentMsgs    uint64
 	PhaseTime   int64
-	PhaseInfo   map[string]interface{}
 }
 
 func (ps *PhaseSummary) worker() string {

@@ -88,7 +88,8 @@ type Worker struct {
 	vinq  *InVertexQ
 	voutq *OutVertexQ
 
-	partitions map[uint64]*Partition
+	partitions      map[uint64]*Partition
+	loadAssignments map[string][]string
 
 	loader       Loader
 	resultWriter ResultWriter
@@ -172,9 +173,10 @@ func (w *Worker) AddCombiner(c Combiner) {
 }
 
 // Expose for RPC interface
-func (w *Worker) SetTopology(partitionMap map[uint64]string) {
-	w.partitionMap = partitionMap
-	log.Printf("partitions set")
+func (w *Worker) SetTopology(ti *TopologyInfo) {
+	w.partitionMap = ti.PartitionMap
+	w.loadAssignments = ti.LoadAssignments
+	log.Printf("partitions and load assignments set")
 
 	for pid, hp := range w.partitionMap {
 		if hp == w.WorkerId() {
@@ -292,15 +294,9 @@ func (w *Worker) cleanup() error {
 }
 
 func loadData(w *Worker, pe *PhaseExec) error {
-	var assignments map[string][]string
-	var ok bool
-	if assignments, ok = pe.Options[OPTION_LOAD_ASSIGNMENT].(map[string][]string); !ok || len(assignments) == 0 {
-		log.Printf("no load assignments in phase exec", w.WorkerId())
-		return nil
-	}
-
 	var thisWorker []string
-	if thisWorker, ok = assignments[w.WorkerId()]; !ok {
+	var ok bool
+	if thisWorker, ok = w.loadAssignments[w.WorkerId()]; !ok {
 		log.Printf("no load assignments for worker %s", w.WorkerId())
 		return nil
 	}

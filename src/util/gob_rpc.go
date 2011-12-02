@@ -225,7 +225,7 @@ func (s *GobWorkerRPCServer) ExecPhase(exec *PhaseExec, resp *Resp) error {
 
 func (s *GobWorkerRPCServer) RecieveTopology(info *TopologyInfo, resp *Resp) error {
 	*resp = OK
-	s.worker.SetTopology(info.PartitionMap)
+	s.worker.SetTopology(info)
 	return nil
 }
 
