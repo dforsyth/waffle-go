@@ -462,13 +462,14 @@ func (m *Master) compute() error {
 		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
 		log.Printf("preparing for superstep %d", m.jobInfo.superstep)
 		m.executePhase(PHASE_STEP_PREPARE)
-		log.Printf("starting superstep %d", m.jobInfo.superstep)
-		m.executePhase(PHASE_SUPERSTEP)
+		log.Printf("persisting master")
 		if m.checkpointFn(m.jobInfo.superstep) {
 			if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
 				return err
 			}
 		}
+		log.Printf("starting superstep %d", m.jobInfo.superstep)
+		m.executePhase(PHASE_SUPERSTEP)
 		log.Printf("superstep complete: %d active verts, %d sent messages", m.jobInfo.phaseInfo.activeVerts, m.jobInfo.phaseInfo.sentMsgs)
 	}
 
