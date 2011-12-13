@@ -20,6 +20,23 @@ const (
 	PHASE_FAILURE
 )
 
+type PhaseError struct {
+	phase         int
+	failedWorkers []error
+	phaseErrors   []error
+}
+
+func (e *PhaseError) Error() string {
+	rval := "PhaseError:\n"
+	for _, error := range e.failedWorkers {
+		rval += error.Error() + "\n"
+	}
+	for _, error := range e.phaseErrors {
+		rval += error.Error() + "\n"
+	}
+	return rval
+}
+
 type WorkerError struct {
 	WorkerId    string
 	ErrorId     int

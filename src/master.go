@@ -351,7 +351,7 @@ func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
 	}
 }
 
-func (m *Master) executePhase(phaseId int) []error {
+func (m *Master) executePhase(phase int) (error *PhaseError) {
 	/* 
 	 * - check for failed workers, remove them from the pool and move their partitions to live workers
 	 * - generate the phase execution order, and send it to all workers
@@ -360,35 +360,33 @@ func (m *Master) executePhase(phaseId int) []error {
 	 * if there were, do not commit the phase info, otherwise commit.
 	 */
 
+	error = &PhaseError{}
+
+	// bump the phase
+	m.phase = phase
+	error.phase = m.phase
+
 	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
 	if err := m.purgeFailedWorkers(); err != nil {
-		log.Println(err)
-		return []error{err}
+		error.phaseErrors = append(error.phaseErrors, err)
+		return
 	}
 
-	// bump the phase and continue
-	m.phase = phaseId
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
 	info := newPhaseInfo()
-	exec := m.newPhaseExec(phaseId)
+	exec := m.newPhaseExec(m.phase)
 
 	m.sendExecToAllWorkers(exec)
 	m.barrier(m.barrierCh, info)
 
 	// Collect errors that occured during the phase.  Create errors for lost workers (for reporting)
-	phaseErrors := make([]error, 0)
-	if len(info.lostWorkers) > 0 {
-		for _, hostPort := range info.lostWorkers {
-			phaseErrors = append(phaseErrors, errors.New(hostPort)) // TODO: create an error type for this
-		}
+	for _, hostPort := range info.lostWorkers {
+		error.failedWorkers = append(error.failedWorkers, errors.New(hostPort))
 	}
-	if len(info.errors) > 0 {
-		phaseErrors = append(phaseErrors, info.errors...)
-	}
-	if len(phaseErrors) > 0 {
-		panic("phase errors") // until this function is properly handled...
-		return phaseErrors
+	error.phaseErrors = append(error.phaseErrors, info.errors...)
+	if len(error.failedWorkers) > 0 || len(error.phaseErrors) > 0 {
+		return
 	}
 
 	// There are no errors occured during the phase, commit the phase info the overall job info
@@ -396,7 +394,6 @@ func (m *Master) executePhase(phaseId int) []error {
 		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
 
 	m.commitPhaseInfo(info)
-
 	return nil
 }
 
