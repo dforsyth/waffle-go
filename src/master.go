@@ -344,9 +344,9 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 	}
 }
 
-func (m *Master) newPhaseExec(phaseId int) *PhaseExec {
+func (m *Master) newPhaseExec(phase int) *PhaseExec {
 	return &PhaseExec{
-		PhaseId:    phaseId,
+		PhaseId:    phase,
 		JobId:      m.Config.JobId,
 		Superstep:  m.jobInfo.superstep,
 		NumVerts:   m.jobInfo.phaseInfo.numVerts,
@@ -363,11 +363,11 @@ func (m *Master) executePhase(phase int) (error *PhaseError) {
 	 * if there were, do not commit the phase info, otherwise commit.
 	 */
 
-	error = &PhaseError{}
-
 	// bump the phase
 	m.phase = phase
-	error.phase = m.phase
+	error = &PhaseError{
+		phase: m.phase,
+	}
 
 	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
 	if err := m.purgeFailedWorkers(); err != nil {
