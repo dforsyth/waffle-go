@@ -284,7 +284,7 @@ func (m *Master) determinePartitions() {
 	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerPool))
 }
 
-func (m *Master) pushTopology() {
+func (m *Master) pushTopology() error {
 	log.Printf("Distributing topology information")
 
 	var workers []string
@@ -312,7 +312,10 @@ func (m *Master) pushTopology() {
 	}
 	wg.Wait()
 
+	// TODO: check for failed workers
+
 	log.Printf("Done distributing worker and partition info")
+	return nil
 }
 
 // Mark worker hostPort as failed
