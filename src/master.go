@@ -349,11 +349,6 @@ func (m *Master) loadRecievedVertices() error {
 			m.jobInfo.initialVerts += ldRecvSummary.TotalVerts
 		}
 	}
-	/*
-		if sum != m.jobInfo.initialVerts {
-			panic("sum != m.jobInfo.initialVerts")
-		}
-	*/
 	return nil
 }
 
@@ -528,38 +523,6 @@ func (m *Master) movePartitions(moveId string) error {
 	return nil
 }
 
-/*
-// run supersteps until there are no more active vertices or queued messages
-func (m *Master) compute() error {
-	log.Printf("Starting computation")
-
-	log.Printf("Initial vert count: %d", m.jobInfo.initialVerts)
-	m.jobInfo.started = true
-	for m.jobInfo.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.jobInfo.superstep++ {
-		if m.Config.MaxSteps > 0 && !(m.jobInfo.superstep < m.Config.MaxSteps) {
-			log.Println("hit max steps, breaking computation loop")
-			break
-		}
-
-		// XXX prepareWorkers tells the worker to cycle message queues.  We should try to get rid of it.
-		log.Printf("preparing for superstep %d", m.jobInfo.superstep)
-		m.executePhase(PHASE_STEP_PREPARE)
-		log.Printf("persisting master")
-		if m.checkpointFn(m.jobInfo.superstep) {
-			if err := m.persister.PersistMaster(m.jobInfo.superstep, m.partitionMap); err != nil {
-				return err
-			}
-		}
-		log.Printf("starting superstep %d", m.jobInfo.superstep)
-		m.executePhase(PHASE_SUPERSTEP)
-		log.Printf("superstep complete: %d active verts, %d sent messages", m.jobInfo.phaseInfo.activeVerts, m.jobInfo.phaseInfo.sentMsgs)
-	}
-
-	log.Printf("Computation complete")
-	return nil
-}
-*/
-
 func (m *Master) writeResults() error {
 	m.phase = PHASE_WRITE_RESULTS
 
@@ -602,34 +565,12 @@ func (m *Master) Run() {
 	m.determinePartitions()
 	m.pushTopology()
 
-	/*
-		if m.Config.StartStep == 0 {
-			m.executePhase(PHASE_LOAD_DATA)
-			m.executePhase(PHASE_DISTRIBUTE_VERTICES)
-		} else {
-			// This is a restart
-			// Find the last checkpointed step for this job
-			// Check that persisted data exists for that superstep, otherwise go to the next oldest checkpointed step
-			// Tell workers to load data from that checkpoint
-			// Redistribute vertices
-
-			// rollback to the last checkpointed superstep
-			m.jobInfo.superstep = m.Config.StartStep
-			// load vertices from persistence
-			m.executePhase(PHASE_LOAD_PERSISTED)
-			// redistribute verts? (I think this is actually useless...)
-			m.executePhase(PHASE_DISTRIBUTE_VERTICES)
-			// set the superstep on workers
-			m.executePhase(PHASE_RECOVER)
-			// we should be ready to go now
-		}
-	*/
 	m.loadData()
 	m.loadRecievedVertices()
 	m.jobInfo.startTime = time.Seconds()
 	m.compute()
 	m.jobInfo.endTime = time.Seconds()
-	// m.executePhase(PHASE_WRITE_RESULTS)
+
 	m.writeResults()
 	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
 	log.Printf("total sent messages was %d", m.jobInfo.totalSentMsgs)
