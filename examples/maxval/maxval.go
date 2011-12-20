@@ -163,7 +163,7 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 
 // Do work
 func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
-	// start := time.Seconds()
+	start := time.Seconds()
 	max := 0
 	for _, msg := range msgs {
 		val := msg.(*MaxValueMsg).Value
@@ -181,7 +181,35 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 		}
 	}
 	v.VoteToHalt()
-	// v.SubmitToAggregator("timing", time.Seconds() - start)
+	v.SubmitToAggregator("timing", time.Seconds()-start)
+}
+
+type TimingAggregator struct {
+	values []int64
+}
+
+func (a *TimingAggregator) Name() string {
+	return "timing"
+}
+
+func (a *TimingAggregator) Reset() {
+	a.values = a.values[0:0]
+}
+
+func (a *TimingAggregator) Submit(v interface{}) {
+	if dur, ok := v.(int64); ok {
+		a.values = append(a.values, dur)
+	} else {
+		panic("non int64 value submitted to TimingAggregator")
+	}
+}
+
+func (a *TimingAggregator) ReduceAndEmit() interface{} {
+	var sum int64 = 0
+	for _, dur := range a.values {
+		sum += dur
+	}
+	return sum / int64(len(a.values))
 }
 
 var master bool
@@ -220,6 +248,7 @@ func main() {
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
 			return false
 		})
+		m.AddAggregator(&TimingAggregator{})
 		m.Config.LoadPaths = []string{loadDir}
 		m.Run()
 	} else {
@@ -235,6 +264,7 @@ func main() {
 		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
 		w.AddCombiner(&MaxValueCombiner{})
+		w.AddAggregator(&TimingAggregator{})
 		w.Run()
 	}
 }

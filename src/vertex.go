@@ -130,5 +130,7 @@ func (v *VertexBase) NumVertices() uint64 {
 }
 
 func (v *VertexBase) SubmitToAggregator(name string, val interface{}) {
-	v.part.(*Partition).worker.aggregators[name].Submit(val)
+	if aggr, ok := v.part.(*Partition).worker.aggregators[name]; ok {
+		aggr.Submit(val)
+	}
 }
