@@ -7,6 +7,7 @@ type node struct {
 	port         string
 	partitionMap map[uint64]string // partition map (partition id -> worker id)
 	partFn       func(string, uint64) uint64
+	aggregators  map[string]Aggregator
 }
 
 func (n *node) Host() string {
@@ -27,6 +28,7 @@ func (n *node) initNode(host, port string) {
 		}
 		return sum % n
 	}
+	n.aggregators = make(map[string]Aggregator)
 }
 
 func (n *node) partitionOf(id string) uint64 {
@@ -35,4 +37,8 @@ func (n *node) partitionOf(id string) uint64 {
 
 func (n *node) SetPartitionFn(fn func(string, uint64) uint64) {
 	n.partFn = fn
+}
+
+func (n *node) AddAggregator(aggr Aggregator) {
+	n.aggregators[aggr.Name()] = aggr
 }

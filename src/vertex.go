@@ -128,3 +128,7 @@ func (v *VertexBase) IsActive() bool {
 func (v *VertexBase) NumVertices() uint64 {
 	return v.part.(*Partition).worker.jobStats.numVertices
 }
+
+func (v *VertexBase) SubmitToAggregator(name string, val interface{}) {
+	v.part.(*Partition).worker.aggregators[name].Submit(val)
+}

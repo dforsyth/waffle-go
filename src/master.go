@@ -19,31 +19,15 @@ type MasterConfig struct {
 	LoadPaths              []string
 }
 
-type phaseInfo struct {
-	activeVerts uint64
-	numVerts    uint64
-	sentMsgs    uint64
-	lostWorkers []string
-	errors      []error
-}
-
-func newPhaseInfo() *phaseInfo {
-	return &phaseInfo{
-		activeVerts: 0,
-		numVerts:    0,
-		sentMsgs:    0,
-		lostWorkers: make([]string, 0),
-		errors:      make([]error, 0),
-	}
-}
-
 type jobInfo struct {
-	phaseInfo      phaseInfo
+	initialVerts   uint64
+	loadedVerts    uint64
 	canRegister    bool
 	lastCheckpoint uint64
 	totalSentMsgs  uint64
 	startTime      int64
 	endTime        int64
+	started        bool
 	superstep      uint64
 }
 
@@ -78,7 +62,7 @@ type Master struct {
 }
 
 type barrierEntry interface {
-	worker() string
+	WorkerId() string
 }
 
 type barrierRemove struct {
@@ -86,18 +70,18 @@ type barrierRemove struct {
 	error    error
 }
 
-func (e *barrierRemove) worker() string {
+func (e *barrierRemove) WorkerId() string {
 	return e.hostPort
 }
 
-func (m *Master) EnterBarrier(summary *PhaseSummary) error {
+func (m *Master) EnterBarrier(summary PhaseSummary) error {
 	go func() {
 		m.barrierCh <- summary
 	}()
 	return nil
 }
 
-func (m *Master) barrier(ch chan barrierEntry, info *phaseInfo) {
+func (m *Master) barrier(ch chan barrierEntry) (collected []PhaseSummary, lost []string) {
 	// create a map of workers to wait for using the current workerpool
 	barrier := make(map[string]interface{})
 	for hostPort := range m.workerPool {
@@ -109,28 +93,28 @@ func (m *Master) barrier(ch chan barrierEntry, info *phaseInfo) {
 	}
 	// wait on the barrier channel
 	for e := range ch {
-		if _, ok := barrier[e.worker()]; !ok {
-			log.Printf("%s is not in the barrier map, discaring entry", e.worker())
+		if _, ok := barrier[e.WorkerId()]; !ok {
+			log.Printf("%s is not in the barrier map, discaring entry", e.WorkerId())
 			continue
 		}
 
 		switch entry := e.(type) {
-		case *PhaseSummary:
-			log.Printf("%s is entering the barrier", entry.WorkerId)
-			collectSummaryInfo(info, entry)
-			delete(barrier, entry.WorkerId)
+		case PhaseSummary:
+			log.Printf("%s is entering the barrier", entry.WorkerId())
+			collected = append(collected, entry)
 		case *barrierRemove:
-			log.Printf("removing %s from barrier map", entry.hostPort)
-			delete(barrier, entry.hostPort)
-			// add lost workers to a list that can be used to check phase success later on
-			info.lostWorkers = append(info.lostWorkers, entry.hostPort)
+			log.Printf("removing %s from barrier map", entry.WorkerId())
+			lost = append(lost, entry.hostPort)
 		}
+		delete(barrier, e.WorkerId())
 
 		if len(barrier) == 0 {
 			// barrier is empty, all of the workers we have been waiting for are accounted for
 			return
 		}
 	}
+	panic("not reached")
+	return
 }
 
 func NewMaster(addr, port string) *Master {
@@ -153,21 +137,6 @@ func NewMaster(addr, port string) *Master {
 
 func (m *Master) SetCheckpointFn(fn func(uint64) bool) {
 	m.checkpointFn = fn
-}
-
-// Update the stats from the current step
-func collectSummaryInfo(info *phaseInfo, ps *PhaseSummary) {
-	info.activeVerts += ps.ActiveVerts
-	info.numVerts += ps.NumVerts
-	info.sentMsgs += ps.SentMsgs
-	info.errors = append(info.errors, ps.Errors...)
-}
-
-func (m *Master) commitPhaseInfo(info *phaseInfo) {
-	m.jobInfo.phaseInfo.activeVerts = info.activeVerts
-	m.jobInfo.phaseInfo.numVerts = info.numVerts
-	m.jobInfo.phaseInfo.sentMsgs = info.sentMsgs
-	m.jobInfo.totalSentMsgs += m.jobInfo.phaseInfo.sentMsgs
 }
 
 func (m *Master) SetRpcClient(c MasterRpcClient) {
@@ -287,16 +256,9 @@ func (m *Master) determinePartitions() {
 func (m *Master) pushTopology() error {
 	log.Printf("Distributing topology information")
 
-	var workers []string
-	for worker := range m.workerPool {
-		workers = append(workers, worker)
-	}
-	la := m.loader.AssignLoad(workers, m.Config.LoadPaths)
-
 	topInfo := &TopologyInfo{
-		JobId:           m.Config.JobId,
-		PartitionMap:    m.partitionMap,
-		LoadAssignments: la,
+		JobId:        m.Config.JobId,
+		PartitionMap: m.partitionMap,
 	}
 
 	var wg sync.WaitGroup
@@ -324,7 +286,7 @@ func (m *Master) markWorkerFailed(hostPort, message string) {
 	defer m.poolLock.Unlock()
 
 	if info, ok := m.workerPool[hostPort]; ok {
-		log.Printf("marking %d as failed (%s)", hostPort, message)
+		log.Printf("marking %s as failed (%s)", hostPort, message)
 		info.failed = true
 		info.errorMsg = message
 		m.barrierCh <- &barrierRemove{hostPort: hostPort}
@@ -333,7 +295,7 @@ func (m *Master) markWorkerFailed(hostPort, message string) {
 	}
 }
 
-func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
+func (m *Master) sendExecToAllWorkers(exec PhaseExec) {
 	for hostPort := range m.workerPool {
 		hp := hostPort
 		go func() {
@@ -344,17 +306,144 @@ func (m *Master) sendExecToAllWorkers(exec *PhaseExec) {
 	}
 }
 
-func (m *Master) newPhaseExec(phase int) *PhaseExec {
-	return &PhaseExec{
-		PhaseId:    phase,
-		JobId:      m.Config.JobId,
-		Superstep:  m.jobInfo.superstep,
-		NumVerts:   m.jobInfo.phaseInfo.numVerts,
-		Checkpoint: m.checkpointFn(m.jobInfo.superstep),
+func (m *Master) loadData() error {
+	m.phase = PHASE_LOAD_DATA
+
+	var workers []string
+	for worker := range m.workerPool {
+		workers = append(workers, worker)
+	}
+	exec := &LoadDataExec{
+		LoadAssignments: m.loader.AssignLoad(workers, m.Config.LoadPaths),
+	}
+	exec.JId = m.Config.JobId
+	exec.PId = m.phase
+
+	summaries, lost := m.executePhase(exec)
+	if lost != nil {
+		panic("lost workers on load, need to repartition and try again...")
+	}
+
+	for _, summary := range summaries {
+		if loadSummary, ok := summary.(*LoadDataSummary); ok {
+			m.jobInfo.loadedVerts += loadSummary.LoadedVerts
+		}
+	}
+	return nil
+}
+
+func (m *Master) loadRecievedVertices() error {
+	m.phase = PHASE_DISTRIBUTE_VERTICES
+
+	exec := &LoadRecievedExec{}
+	exec.JId = m.Config.JobId
+	exec.PId = m.phase
+
+	summaries, lost := m.executePhase(exec)
+	if lost != nil {
+
+	}
+
+	for _, summary := range summaries {
+		if ldRecvSummary, ok := summary.(*LoadRecievedSummary); ok {
+			m.jobInfo.initialVerts += ldRecvSummary.TotalVerts
+		}
+	}
+	/*
+		if sum != m.jobInfo.initialVerts {
+			panic("sum != m.jobInfo.initialVerts")
+		}
+	*/
+	return nil
+}
+
+func (m *Master) stepPrepare() error {
+	m.phase = PHASE_STEP_PREPARE
+
+	exec := &StepPrepareExec{}
+	exec.JId = m.Config.JobId
+	exec.PId = m.phase
+
+	_, lost := m.executePhase(exec)
+	if lost != nil {
+
+	}
+	return nil
+}
+
+type stepStat struct {
+	superstep                         uint64
+	activeVerts, sentMsgs, totalVerts uint64
+	aggregates                        map[string]interface{}
+}
+
+func (m *Master) superstep(last *stepStat) (*stepStat, error) {
+	m.phase = PHASE_SUPERSTEP
+
+	superstep := uint64(0)
+	if last != nil {
+		superstep = last.superstep + 1
+	}
+	exec := &SuperstepExec{
+		Superstep:  superstep,
+		Aggregates: make(map[string]interface{}),
+	}
+	exec.JId = m.Config.JobId
+	exec.PId = m.phase
+
+	if last != nil {
+		for key, val := range last.aggregates {
+			exec.Aggregates[key] = val
+		}
+	}
+	for _, aggr := range m.aggregators {
+		aggr.Reset()
+	}
+
+	summaries, lost := m.executePhase(exec)
+	if lost != nil {
+
+	}
+
+	stepStats := &stepStat{
+		aggregates: make(map[string]interface{}),
+	}
+	log.Printf("got %d summaries", len(summaries))
+	for _, summary := range summaries {
+		if stepSummary, ok := summary.(*SuperstepSummary); ok {
+			stepStats.activeVerts += stepSummary.ActiveVerts
+			stepStats.sentMsgs += stepSummary.SentMsgs
+			stepStats.totalVerts += stepSummary.TotalVerts
+			for key, val := range stepSummary.Aggregates {
+				m.aggregators[key].Submit(val)
+			}
+		} else {
+			log.Printf("got a bad summary type back")
+		}
+	}
+	for key, aggr := range m.aggregators {
+		stepStats.aggregates[key] = aggr.ReduceAndEmit()
+	}
+	return stepStats, nil
+}
+
+func (m *Master) compute() {
+	var stats *stepStat
+	var error error
+	for {
+		m.stepPrepare()
+		stats, error = m.superstep(stats)
+		if error != nil {
+			panic(error)
+		}
+		if stats.activeVerts == 0 && stats.sentMsgs == 0 {
+			log.Printf("activeVerts: %d, sentMsgs: %d", stats.activeVerts, stats.sentMsgs)
+			break
+		}
 	}
 }
 
-func (m *Master) executePhase(phase int) (error *PhaseError) {
+func (m *Master) executePhase(exec PhaseExec) (summaries []PhaseSummary, lost []string) {
 	/* 
 	 * - check for failed workers, remove them from the pool and move their partitions to live workers
 	 * - generate the phase execution order, and send it to all workers
@@ -363,41 +452,32 @@ func (m *Master) executePhase(phase int) (error *PhaseError) {
 	 * if there were, do not commit the phase info, otherwise commit.
 	 */
 
-	// bump the phase
-	m.phase = phase
-	error = &PhaseError{
-		phase: m.phase,
-	}
-
 	// Before we send out any orders to the workers, handle any failed workers that need to be removed from the pool
-	if err := m.purgeFailedWorkers(); err != nil {
-		error.phaseErrors = append(error.phaseErrors, err)
-		return
-	}
+	m.purgeFailedWorkers()
 
 	// for now, collect phase info on a per-phase basis and commit the info once the phase is verified successful.  in the future
 	// it would be nice to collect this on a per-worker basis for fine grained stat collection and realtime resource allocation
-	info := newPhaseInfo()
-	exec := m.newPhaseExec(m.phase)
+	// info := newPhaseInfo()
 
 	m.sendExecToAllWorkers(exec)
-	m.barrier(m.barrierCh, info)
+	// summaries, lost := m.barrier(m.barrierCh)
 
-	// Collect errors that occured during the phase.  Create errors for lost workers (for reporting)
-	for _, hostPort := range info.lostWorkers {
-		error.failedWorkers = append(error.failedWorkers, errors.New(hostPort))
-	}
-	error.phaseErrors = append(error.phaseErrors, info.errors...)
-	if len(error.failedWorkers) > 0 || len(error.phaseErrors) > 0 {
-		return
-	}
+	return m.barrier(m.barrierCh)
 
-	// There are no errors occured during the phase, commit the phase info the overall job info
-	log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.phase, m.jobInfo.phaseInfo.activeVerts,
-		m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
+	/*
+			if lost != nil {
+				m.purgeFailedWorkers(lost)
+				error.lostWorkers = append(error.lostWorkers, lost...)
+				return
+			}
 
-	m.commitPhaseInfo(info)
-	return nil
+			// There are no errors occured during the phase, commit the phase info the overall job info
+			log.Printf("phase %d complete: %d active verticies, %d sent messages, %d errors", m.phase, m.jobInfo.phaseInfo.activeVerts,
+				m.jobInfo.phaseInfo.sentMsgs, len(info.errors))
+
+			m.commitPhaseInfo(info)
+		return nil
+	*/
 }
 
 func (m *Master) purgeFailedWorkers() error {
@@ -448,11 +528,13 @@ func (m *Master) movePartitions(moveId string) error {
 	return nil
 }
 
+/*
 // run supersteps until there are no more active vertices or queued messages
 func (m *Master) compute() error {
 	log.Printf("Starting computation")
 
-	log.Printf("Active verts = %d", m.jobInfo.phaseInfo.activeVerts)
+	log.Printf("Initial vert count: %d", m.jobInfo.initialVerts)
+	m.jobInfo.started = true
 	for m.jobInfo.superstep = 0; m.jobInfo.phaseInfo.activeVerts > 0 || m.jobInfo.phaseInfo.sentMsgs > 0; m.jobInfo.superstep++ {
 		if m.Config.MaxSteps > 0 && !(m.jobInfo.superstep < m.Config.MaxSteps) {
 			log.Println("hit max steps, breaking computation loop")
@@ -474,6 +556,21 @@ func (m *Master) compute() error {
 	}
 
 	log.Printf("Computation complete")
+	return nil
+}
+*/
+
+func (m *Master) writeResults() error {
+	m.phase = PHASE_WRITE_RESULTS
+
+	exec := &WriteResultsExec{}
+	exec.JId = m.Config.JobId
+	exec.PId = m.phase
+
+	_, lost := m.executePhase(exec)
+	if lost != nil {
+
+	}
 	return nil
 }
 
@@ -505,31 +602,35 @@ func (m *Master) Run() {
 	m.determinePartitions()
 	m.pushTopology()
 
-	if m.Config.StartStep == 0 {
-		m.executePhase(PHASE_LOAD_DATA)
-		m.executePhase(PHASE_DISTRIBUTE_VERTICES)
-	} else {
-		// This is a restart
-		// Find the last checkpointed step for this job
-		// Check that persisted data exists for that superstep, otherwise go to the next oldest checkpointed step
-		// Tell workers to load data from that checkpoint
-		// Redistribute vertices
+	/*
+		if m.Config.StartStep == 0 {
+			m.executePhase(PHASE_LOAD_DATA)
+			m.executePhase(PHASE_DISTRIBUTE_VERTICES)
+		} else {
+			// This is a restart
+			// Find the last checkpointed step for this job
+			// Check that persisted data exists for that superstep, otherwise go to the next oldest checkpointed step
+			// Tell workers to load data from that checkpoint
+			// Redistribute vertices
 
-		// rollback to the last checkpointed superstep
-		m.jobInfo.superstep = m.Config.StartStep
-		// load vertices from persistence
-		m.executePhase(PHASE_LOAD_PERSISTED)
-		// redistribute verts? (I think this is actually useless...)
-		m.executePhase(PHASE_DISTRIBUTE_VERTICES)
-		// set the superstep on workers
-		m.executePhase(PHASE_RECOVER)
-		// we should be ready to go now
-	}
-
+			// rollback to the last checkpointed superstep
+			m.jobInfo.superstep = m.Config.StartStep
+			// load vertices from persistence
+			m.executePhase(PHASE_LOAD_PERSISTED)
+			// redistribute verts? (I think this is actually useless...)
+			m.executePhase(PHASE_DISTRIBUTE_VERTICES)
+			// set the superstep on workers
+			m.executePhase(PHASE_RECOVER)
+			// we should be ready to go now
+		}
+	*/
+	m.loadData()
+	m.loadRecievedVertices()
 	m.jobInfo.startTime = time.Seconds()
 	m.compute()
 	m.jobInfo.endTime = time.Seconds()
-	m.executePhase(PHASE_WRITE_RESULTS)
+	// m.executePhase(PHASE_WRITE_RESULTS)
+	m.writeResults()
 	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
 	log.Printf("total sent messages was %d", m.jobInfo.totalSentMsgs)
 	m.shutdownWorkers()

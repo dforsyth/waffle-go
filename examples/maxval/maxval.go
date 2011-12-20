@@ -163,6 +163,7 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 
 // Do work
 func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
+	// start := time.Seconds()
 	max := 0
 	for _, msg := range msgs {
 		val := msg.(*MaxValueMsg).Value
@@ -180,6 +181,7 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 		}
 	}
 	v.VoteToHalt()
+	// v.SubmitToAggregator("timing", time.Seconds() - start)
 }
 
 var master bool

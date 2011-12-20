@@ -42,32 +42,104 @@ type RegisterResp struct {
 }
 
 type TopologyInfo struct {
-	JobId           string
-	PartitionMap    map[uint64]string
+	JobId        string
+	PartitionMap map[uint64]string
+}
+
+type PhaseExec interface {
+	JobId() string
+	PhaseId() int
+}
+
+type ExecBase struct {
+	JId string
+	PId int
+}
+
+func (e *ExecBase) JobId() string {
+	return e.JId
+}
+
+func (e *ExecBase) PhaseId() int {
+	return e.PId
+}
+
+type LoadDataExec struct {
+	ExecBase
 	LoadAssignments map[string][]string
 }
 
-type PhaseExec struct {
-	JobId       string
-	PhaseId     int
+type LoadRecievedExec struct {
+	ExecBase
+}
+
+type StepPrepareExec struct {
+	ExecBase
+}
+
+type SuperstepExec struct {
+	ExecBase
 	Superstep   uint64
 	Checkpoint  bool
-	NumVerts    uint64
+	TotalVerts  uint64
 	ActiveVerts uint64
+	Aggregates  map[string]interface{}
 }
 
-type PhaseSummary struct {
-	JobId       string
-	WorkerId    string
-	PhaseId     int
-	Errors      []error
+type WriteResultsExec struct {
+	ExecBase
+}
+
+type PhaseSummary interface {
+	JobId() string
+	WorkerId() string
+	PhaseId() int
+}
+
+type SummaryBase struct {
+	JId string
+	WId string
+	PId int
+}
+
+func (s *SummaryBase) JobId() string {
+	return s.JId
+}
+
+func (s *SummaryBase) WorkerId() string {
+	return s.WId
+}
+
+func (s *SummaryBase) PhaseId() int {
+	return s.PId
+}
+
+type LoadDataSummary struct {
+	SummaryBase
+	LoadedVerts uint64
+	Error       string
+}
+
+type LoadRecievedSummary struct {
+	SummaryBase
+	TotalVerts  uint64
+	ActiveVerts uint64 // needed?
+}
+
+type StepPrepareSummary struct {
+	SummaryBase
+}
+
+type SuperstepSummary struct {
+	SummaryBase
 	ActiveVerts uint64
-	NumVerts    uint64
-	SentVerts   uint64
 	SentMsgs    uint64
-	PhaseTime   int64
+	TotalVerts  uint64
+	Aggregates  map[string]interface{}
+	Error       string
 }
 
-func (ps *PhaseSummary) worker() string {
-	return ps.WorkerId
+type WriteResultsSummary struct {
+	SummaryBase
+	Error string
 }

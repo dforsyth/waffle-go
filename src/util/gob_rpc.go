@@ -29,6 +29,18 @@ func (c *GobRPCClientBase) init() {
 	gob.Register(&EdgeBase{})
 	gob.Register(&MsgBase{})
 	gob.Register(&WorkerError{})
+	gob.Register(&ExecBase{})
+	gob.Register(&LoadDataExec{})
+	gob.Register(&LoadRecievedExec{})
+	gob.Register(&StepPrepareExec{})
+	gob.Register(&SuperstepExec{})
+	gob.Register(&WriteResultsExec{})
+	gob.Register(&SummaryBase{})
+	gob.Register(&LoadDataSummary{})
+	gob.Register(&LoadRecievedSummary{})
+	gob.Register(&StepPrepareSummary{})
+	gob.Register(&SuperstepSummary{})
+	gob.Register(&WriteResultsSummary{})
 	gob.Register(make(map[string][]string)) // uh... this is probably not going to stick around...
 }
 
@@ -68,13 +80,13 @@ func (s *GobMasterRPCClient) PushTopology(workerAddr string, info *TopologyInfo)
 	return nil
 }
 
-func (s *GobMasterRPCClient) ExecutePhase(workerAddr string, exec *PhaseExec) error {
+func (s *GobMasterRPCClient) ExecutePhase(workerAddr string, exec PhaseExec) error {
 	client, err := s.workerClient(workerAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err = client.Call("GobWorkerRPCServer.ExecPhase", exec, &resp); err != nil {
+	if err = client.Call("GobWorkerRPCServer.ExecPhase", &exec, &resp); err != nil {
 		return err
 	}
 	return nil
@@ -129,13 +141,13 @@ func (c *GobWorkerRPCClient) Register(masterAddr, host, port string) (string, er
 	return resp.JobId, nil
 }
 
-func (c *GobWorkerRPCClient) SendSummary(masterAddr string, summary *PhaseSummary) error {
+func (c *GobWorkerRPCClient) SendSummary(masterAddr string, summary PhaseSummary) error {
 	mclient, err := c.masterClient(masterAddr)
 	if err != nil {
 		return err
 	}
 	var resp Resp
-	if err := mclient.Call("GobMasterRPCServer.EnterPhaseBarrier", summary, &resp); err != nil {
+	if err := mclient.Call("GobMasterRPCServer.EnterPhaseBarrier", &summary, &resp); err != nil {
 		return err
 	}
 	return nil
@@ -193,7 +205,7 @@ func (s *GobMasterRPCServer) RegisterWorker(info *RegisterInfo, resp *RegisterRe
 	return nil
 }
 
-func (s *GobMasterRPCServer) EnterPhaseBarrier(summary *PhaseSummary, resp *Resp) error {
+func (s *GobMasterRPCServer) EnterPhaseBarrier(summary PhaseSummary, resp *Resp) error {
 	*resp = OK
 	s.master.EnterBarrier(summary)
 	return nil
@@ -218,7 +230,7 @@ func (s *GobWorkerRPCServer) Start(worker *Worker) {
 	go http.Serve(listener, nil)
 }
 
-func (s *GobWorkerRPCServer) ExecPhase(exec *PhaseExec, resp *Resp) error {
+func (s *GobWorkerRPCServer) ExecPhase(exec PhaseExec, resp *Resp) error {
 	*resp = OK
 	return s.worker.ExecPhase(exec)
 }
