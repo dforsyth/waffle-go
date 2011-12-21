@@ -45,6 +45,7 @@ type stepInfo struct {
 	sentMsgs       uint64
 	superstep      uint64
 	checkpoint     bool
+	aggregates     map[string]interface{}
 }
 
 type jobStat struct {
@@ -395,7 +396,9 @@ func (w *Worker) persistPartitions() (err error) {
 func step(w *Worker, e PhaseExec) PhaseSummary {
 	pe := e.(*SuperstepExec)
 
-	ps := &SuperstepSummary{}
+	ps := &SuperstepSummary{
+		Aggregates: make(map[string]interface{}),
+	}
 	ps.WId = w.WorkerId()
 
 	superstep, checkpoint := pe.Superstep, pe.Checkpoint
@@ -418,6 +421,8 @@ func step(w *Worker, e PhaseExec) PhaseSummary {
 	for _, aggr := range w.aggregators {
 		aggr.Reset()
 	}
+
+	w.stepInfo.aggregates = pe.Aggregates
 
 	var wg sync.WaitGroup
 	// XXX limit max routines?

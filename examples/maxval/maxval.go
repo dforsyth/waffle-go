@@ -163,6 +163,9 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 
 // Do work
 func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
+	if val := v.AggregateValue("timing"); v.Superstep() > 0 && val != nil {
+		log.Printf("timing for last step was %d", v.AggregateValue("timing"))
+	}
 	start := time.Seconds()
 	max := 0
 	for _, msg := range msgs {

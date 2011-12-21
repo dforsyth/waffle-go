@@ -379,6 +379,7 @@ func (m *Master) superstep(last *stepStat) (*stepStat, error) {
 	if last != nil {
 		superstep = last.superstep + 1
 	}
+	log.Printf("--------- superstep %d ---------", superstep)
 	exec := &SuperstepExec{
 		Superstep:  superstep,
 		Aggregates: make(map[string]interface{}),
@@ -401,9 +402,9 @@ func (m *Master) superstep(last *stepStat) (*stepStat, error) {
 	}
 
 	stepStats := &stepStat{
+		superstep:  superstep,
 		aggregates: make(map[string]interface{}),
 	}
-	log.Printf("got %d summaries", len(summaries))
 	for _, summary := range summaries {
 		if stepSummary, ok := summary.(*SuperstepSummary); ok {
 			stepStats.activeVerts += stepSummary.ActiveVerts
@@ -419,6 +420,7 @@ func (m *Master) superstep(last *stepStat) (*stepStat, error) {
 	for key, aggr := range m.aggregators {
 		stepStats.aggregates[key] = aggr.ReduceAndEmit()
 	}
+	log.Printf("------------ end %d -----------", superstep)
 	return stepStats, nil
 }
 

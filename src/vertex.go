@@ -134,3 +134,10 @@ func (v *VertexBase) SubmitToAggregator(name string, val interface{}) {
 		aggr.Submit(val)
 	}
 }
+
+func (v *VertexBase) AggregateValue(name string) interface{} {
+	if val, ok := v.part.(*Partition).worker.stepInfo.aggregates[name]; ok {
+		return val
+	}
+	return nil
+}
