@@ -163,10 +163,12 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 
 // Do work
 func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
+	start := time.Nanoseconds()
 	if val := v.AggregateValue("timing"); v.Superstep() > 0 && val != nil {
-		log.Printf("timing for last step was %d", v.AggregateValue("timing"))
+		if dur, ok := val.(int64); ok && dur > 5*1e8 {
+			log.Printf("timing: %d nanoseconds", val)
+		}
 	}
-	start := time.Seconds()
 	max := 0
 	for _, msg := range msgs {
 		val := msg.(*MaxValueMsg).Value
@@ -184,7 +186,7 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 		}
 	}
 	v.VoteToHalt()
-	v.SubmitToAggregator("timing", time.Seconds()-start)
+	v.SubmitToAggregator("timing", time.Nanoseconds()-start)
 }
 
 type TimingAggregator struct {
