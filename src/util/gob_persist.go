@@ -40,11 +40,11 @@ func newCheckpointData(partitionId, superstep uint64, vertices []Vertex, inbound
 }
 
 func (p *GobPersister) PersistPartition(partitionId, superstep uint64, vertices []Vertex, inbound []Msg) error {
-	directory := path.Join(p.path, strconv.Uitoa64(partitionId))
+	directory := path.Join(p.path, strconv.FormatUint(partitionId, 10))
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
 	}
-	filePath := path.Join(directory, strconv.Uitoa64(superstep))
+	filePath := path.Join(directory, strconv.FormatUint(superstep, 10))
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func (p *GobPersister) PersistPartition(partitionId, superstep uint64, vertices 
 }
 
 func (p *GobPersister) LoadPartition(partitionId, superstep uint64) ([]Vertex, []Msg, error) {
-	filePath := path.Join(p.path, strconv.Uitoa64(partitionId), strconv.Uitoa64(superstep), strconv.Uitoa64(superstep))
+	filePath := path.Join(p.path, strconv.FormatUint(partitionId, 10), strconv.FormatUint(superstep, 10), strconv.FormatUint(superstep, 10))
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, nil, err
@@ -81,7 +81,7 @@ func (p *GobPersister) PersistMaster(superstep uint64, partitions map[uint64]str
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
 	}
-	filePath := path.Join(directory, strconv.Uitoa64(superstep))
+	filePath := path.Join(directory, strconv.FormatUint(superstep, 10))
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func (p *GobPersister) PersistMaster(superstep uint64, partitions map[uint64]str
 }
 
 func (p *GobPersister) LoadMaster(superstep uint64) (map[uint64]string, error) {
-	filePath := path.Join(p.path, master, strconv.Uitoa64(superstep))
+	filePath := path.Join(p.path, master, strconv.FormatUint(superstep, 10))
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, err

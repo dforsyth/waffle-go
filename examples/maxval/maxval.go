@@ -42,10 +42,10 @@ func filesToLoad(dir string) ([]string, error) {
 
 	var paths []string
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name, ".data") {
+		if !strings.HasSuffix(file.Name(), ".data") {
 			continue
 		}
-		paths = append(paths, file.Name)
+		paths = append(paths, file.Name())
 	}
 	log.Println("files to load:")
 	for _, path := range paths {
@@ -126,7 +126,6 @@ func (l *MaxValueLoader) Load(w *waffle.Worker, filePath string) (loaded uint64,
 
 // Writes max value to stdout
 type MaxValueResultWriter struct {
-
 }
 
 func (rw *MaxValueResultWriter) WriteResults(w *waffle.Worker) error {
@@ -145,7 +144,6 @@ func (rw *MaxValueResultWriter) WriteResults(w *waffle.Worker) error {
 
 // Combine to a single max value message
 type MaxValueCombiner struct {
-
 }
 
 func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
@@ -163,7 +161,7 @@ func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
 
 // Do work
 func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
-	start := time.Nanoseconds()
+	start := time.Now()
 	if val := v.AggregateValue("timing"); v.Superstep() > 0 && val != nil {
 		if dur, ok := val.(int64); ok && dur > 5*1e8 {
 			log.Printf("timing: %d nanoseconds", val)
@@ -186,11 +184,11 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 		}
 	}
 	v.VoteToHalt()
-	v.SubmitToAggregator("timing", time.Nanoseconds()-start)
+	v.SubmitToAggregator("timing", int(time.Now().Sub(start)))
 }
 
 type TimingAggregator struct {
-	values []int64
+	values []int
 }
 
 func (a *TimingAggregator) Name() string {
@@ -202,19 +200,19 @@ func (a *TimingAggregator) Reset() {
 }
 
 func (a *TimingAggregator) Submit(v interface{}) {
-	if dur, ok := v.(int64); ok {
+	if dur, ok := v.(int); ok {
 		a.values = append(a.values, dur)
 	} else {
-		panic("non int64 value submitted to TimingAggregator")
+		panic("non int value submitted to TimingAggregator")
 	}
 }
 
 func (a *TimingAggregator) ReduceAndEmit() interface{} {
-	var sum int64 = 0
+	var sum int = 0
 	for _, dur := range a.values {
 		sum += dur
 	}
-	return sum / int64(len(a.values))
+	return sum / len(a.values)
 }
 
 var master bool
@@ -242,7 +240,7 @@ func main() {
 	if master {
 		m := waffle.NewMaster(host, port)
 
-		m.Config.JobId = "maxval-" + time.UTC().String()
+		m.Config.JobId = "maxval-" + time.Now().UTC().String()
 		m.Config.MinWorkers = minWorkers
 		m.Config.HeartbeatInterval = 10 * 1e9
 

@@ -21,8 +21,8 @@ var phaseMap map[int]phaseFn = map[int]phaseFn{
 }
 
 type phaseStat struct {
-	startTime int64
-	endTime   int64
+	startTime int
+	endTime   int
 	sentMsgs  uint64
 }
 
@@ -32,11 +32,11 @@ func (s *phaseStat) reset() {
 }
 
 func (s *phaseStat) start() {
-	s.startTime = time.Seconds()
+	s.startTime = time.Now().Nanosecond()
 }
 
 func (s *phaseStat) end() {
-	s.endTime = time.Seconds()
+	s.endTime = time.Now().Nanosecond()
 }
 
 type stepInfo struct {

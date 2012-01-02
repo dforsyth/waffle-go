@@ -25,8 +25,8 @@ type jobInfo struct {
 	canRegister    bool
 	lastCheckpoint uint64
 	totalSentMsgs  uint64
-	startTime      int64
-	endTime        int64
+	startTime      int
+	endTime        int
 	started        bool
 	superstep      uint64
 }
@@ -36,7 +36,7 @@ type workerInfo struct {
 	port          string
 	failed        bool
 	errorMsg      string
-	lastHeartbeat int64
+	lastHeartbeat int
 	heartbeatCh   chan byte
 }
 
@@ -174,10 +174,10 @@ func (m *Master) ekg(info *workerInfo) {
 		} else {
 			log.Printf("successful connect to %s", hostPort)
 			conn.Close()
-			info.lastHeartbeat = time.Seconds()
+			info.lastHeartbeat = time.Now().Nanosecond()
 		}
 		select {
-		case <-time.After(m.Config.HeartbeatInterval):
+		case <-time.After(time.Duration(m.Config.HeartbeatInterval)):
 		case <-info.heartbeatCh:
 			return // end the ekg loop
 		}
@@ -569,9 +569,9 @@ func (m *Master) Run() {
 
 	m.loadData()
 	m.loadRecievedVertices()
-	m.jobInfo.startTime = time.Seconds()
+	m.jobInfo.startTime = time.Now().Nanosecond()
 	m.compute()
-	m.jobInfo.endTime = time.Seconds()
+	m.jobInfo.endTime = time.Now().Nanosecond()
 
 	m.writeResults()
 	log.Printf("compute time was %d", m.jobInfo.endTime-m.jobInfo.startTime)
