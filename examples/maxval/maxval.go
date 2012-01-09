@@ -253,7 +253,7 @@ func main() {
 		})
 		m.AddAggregator(&TimingAggregator{})
 		m.Config.LoadPaths = []string{loadDir}
-		m.Run()
+		m.Start()
 	} else {
 		w := waffle.NewWorker(host, port)
 		w.Config.MessageThreshold = 1000

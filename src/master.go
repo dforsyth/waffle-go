@@ -1,6 +1,7 @@
 package waffle
 
 import (
+	"batter"
 	"errors"
 	"log"
 	"net"
@@ -41,6 +42,8 @@ type workerInfo struct {
 }
 
 type Master struct {
+	batter.Master
+
 	node
 
 	Config  MasterConfig
@@ -161,29 +164,7 @@ func (m *Master) startRPC() error {
 	return nil
 }
 
-func (m *Master) ekg(info *workerInfo) {
-	hostPort := net.JoinHostPort(info.host, info.port)
-	remote, err := net.ResolveTCPAddr("tcp", hostPort)
-	if err != nil {
-		panic(err)
-	}
-	for {
-		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
-			log.Printf("worker %s could not be dialed", hostPort)
-			m.markWorkerFailed(hostPort, "Could not be dialed")
-		} else {
-			log.Printf("successful connect to %s", hostPort)
-			conn.Close()
-			info.lastHeartbeat = time.Now().Nanosecond()
-		}
-		select {
-		case <-time.After(time.Duration(m.Config.HeartbeatInterval)):
-		case <-info.heartbeatCh:
-			return // end the ekg loop
-		}
-	}
-}
-
+/*
 func (m *Master) RegisterWorker(host, port string) (string, error) {
 	m.poolLock.Lock()
 	defer m.poolLock.Unlock()
@@ -215,6 +196,7 @@ func (m *Master) RegisterWorker(host, port string) (string, error) {
 
 	return m.Config.JobId, nil
 }
+*/
 
 func (m *Master) registerWorkers() error {
 	log.Printf("Starting registration phase")
@@ -243,14 +225,15 @@ func (m *Master) determinePartitions() {
 	m.partitionMap = make(map[uint64]string)
 	// XXX a better set of server configurations would allow us to set min partitions per worker.
 	// They could send this information at registration time.
+	workers := m.Workers()
 	for i, p := 0, 0; i < int(m.Config.MinPartitionsPerWorker); i++ {
-		for hostPort := range m.workerPool {
+		for _, hostPort := range workers {
 			m.partitionMap[uint64(p)] = hostPort
 			p++
 		}
 	}
 
-	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(m.workerPool))
+	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(workers))
 }
 
 func (m *Master) pushTopology() error {
@@ -560,8 +543,53 @@ func (m *Master) shutdownWorkers() error {
 	return nil
 }
 
-func (m *Master) Run() {
-	m.startRPC()
+type LoadTask struct {
+	batter.TaskerBase
+	w            *Worker
+	PartitionMap map[uint64]string
+	Assignment   map[string][]string // maybe just bring this down to a []string.  does every worker really need to know what the other loaded?
+}
+
+type LoadTaskResponse struct {
+	batter.TaskerBase
+	Errors      []error
+	TotalLoaded uint64
+}
+
+func (t *LoadTask) Execute() (batter.TaskResponse, error) {
+	// set the partition map
+	t.w.partitionMap = t.PartitionMap
+
+	var assigned []string
+	var ok bool
+	// w is set on the way in
+	if assigned, ok = t.Assignment[t.w.WorkerId()]; !ok {
+		log.Printf("no load assignments for %s", t.w.WorkerId())
+		return &LoadTaskResponse{}, nil
+	}
+	var totalLoaded uint64
+	for _, assignment := range assigned {
+		loaded, err := t.w.loader.Load(t.w, assignment)
+		if err != nil {
+			return &LoadTaskResponse{Errors: []error{err}}, nil
+		}
+		totalLoaded += loaded
+	}
+
+	return &LoadTaskResponse{TotalLoaded: totalLoaded}, nil
+}
+
+func (m *Master) PartitionAndLoad() error {
+	m.determinePartitions()
+}
+
+func (m *Master) Start() {
+	// m.startRPC()
+	go m.Run()
+	m.WaitForWorkers(m.Config.MinWorkers)
+	m.DisableRegistration()
+
+	m.PartitionAndLoad()
 
 	m.registerWorkers()
 	m.determinePartitions()
