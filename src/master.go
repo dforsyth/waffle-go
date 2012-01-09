@@ -10,7 +10,7 @@ import (
 )
 
 type MasterConfig struct {
-	MinWorkers             uint64
+	MinWorkers             int
 	RegisterWait           int64
 	MinPartitionsPerWorker uint64
 	HeartbeatInterval      int64
@@ -197,7 +197,7 @@ func (m *Master) RegisterWorker(host, port string) (string, error) {
 	return m.Config.JobId, nil
 }
 */
-
+/*
 func (m *Master) registerWorkers() error {
 	log.Printf("Starting registration phase")
 
@@ -218,6 +218,7 @@ func (m *Master) registerWorkers() error {
 	log.Printf("Registration phase complete")
 	return nil
 }
+*/
 
 func (m *Master) determinePartitions() {
 	log.Printf("Designating partitions")
@@ -581,17 +582,18 @@ func (t *LoadTask) Execute() (batter.TaskResponse, error) {
 
 func (m *Master) PartitionAndLoad() error {
 	m.determinePartitions()
+	return nil
 }
 
 func (m *Master) Start() {
 	// m.startRPC()
 	go m.Run()
 	m.WaitForWorkers(m.Config.MinWorkers)
-	m.DisableRegistration()
+	m.CloseRegistration()
 
 	m.PartitionAndLoad()
 
-	m.registerWorkers()
+	// m.registerWorkers()
 	m.determinePartitions()
 	m.pushTopology()
 
