@@ -1,21 +1,21 @@
 package waffle
 
+import (
+	"batter"
+)
+
 // messages passed from vert to vert
 type Msg interface {
-	Target() string
-	SetTarget(string)
+	batter.Msg
 }
 
 type MsgBase struct {
-	TargetId string
+	batter.MsgBase
 }
 
-func (m *MsgBase) Target() string {
-	return m.TargetId
-}
-
-func (m *MsgBase) SetTarget(target string) {
-	m.TargetId = target
+type VertexMsg struct {
+	batter.MsgBase
+	Vertices []Vertex
 }
 
 const (

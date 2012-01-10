@@ -586,12 +586,14 @@ func (m *Master) Compute() error {
 		m.FinishTaskGroup(grp)
 
 		for resp := range grp.Response {
+			_ = resp.(*SuperstepTaskResponse)
 
 		}
-
-		if active == 0 && sent == 0 {
-			break
-		}
+		/*
+			if active == 0 && sent == 0 {
+				break
+			}
+		*/
 	}
 
 	return nil

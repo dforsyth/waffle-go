@@ -45,6 +45,7 @@ func (v *VertexBase) OutEdges() []Edge {
 	return v.Edges
 }
 
+/*
 func (v *VertexBase) removeOutEdge(target string) {
 	if v.Edges == nil {
 		return
@@ -91,6 +92,7 @@ func (v *VertexBase) AddVertex(vert Vertex) {
 	msg.SetTarget(v.VertexId())
 	v.part.(*Partition).worker.outq.addMsg(msg)
 }
+*/
 
 func (v *VertexBase) Superstep() uint64 {
 	return v.part.(*Partition).worker.stepInfo.superstep
@@ -98,7 +100,7 @@ func (v *VertexBase) Superstep() uint64 {
 
 func (v *VertexBase) SendMessageTo(dest string, msg Msg) {
 	msg.SetTarget(dest)
-	v.part.(*Partition).worker.outq.addMsg(msg)
+	v.part.(*Partition).worker.moutq.Funnel <- msg
 }
 
 func (v *VertexBase) Worker() *Worker {

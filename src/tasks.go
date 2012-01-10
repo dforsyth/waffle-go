@@ -42,7 +42,7 @@ func (t *LoadTask) Execute() (batter.TaskResponse, error) {
 	var assigned []string
 	var ok bool
 	// w is set on the way in
-	if assigned, ok = t.Assignment[t.w.WorkerId()]; !ok {
+	if assigned, ok = t.Assignments[t.w.WorkerId()]; !ok {
 		log.Printf("no load assignments for %s", t.w.WorkerId())
 		return &LoadTaskResponse{}, nil
 	}
@@ -56,7 +56,11 @@ func (t *LoadTask) Execute() (batter.TaskResponse, error) {
 		totalLoaded += loaded
 	}
 
-	return &LoadTaskResponse{TotalLoaded: totalLoaded}, nil
+	// flush vertices and voutq
+	t.w.FlushVertices()
+	errors := t.w.voutq.Finish()
+
+	return &LoadTaskResponse{TotalLoaded: totalLoaded, Errors: errors}, nil
 }
 
 type DistributeTask struct {
@@ -70,14 +74,21 @@ type DistributeTaskResponse struct {
 }
 
 func (t *DistributeTask) Execute() (batter.TaskResponse, error) {
-	// drain voutq
-	errors := t.w.voutq.Finish()
-	return &DistributeTaskResponse{Errors: errors}, nil
+	t.w.vinq.Drain()
+	for msg := range t.w.vinq.Spout {
+		for _, v := range msg.(*VertexMsg).Vertices {
+			t.w.AddVertex(v)
+		}
+	}
+	t.w.vinq.Ready()
+
+	return &DistributeTaskResponse{}, nil
 }
 
 type SuperstepTask struct {
 	batter.TaskerBase
 	WaffleTaskBase
+	Superstep  uint64
 	Checkpoint bool
 	Aggr       map[string]interface{}
 }
@@ -90,6 +101,10 @@ type SuperstepTaskResponse struct {
 }
 
 func (t *SuperstepTask) Execute() (batter.TaskResponse, error) {
+	if t.Checkpoint {
+		// persist
+	}
+
 	var pWait sync.WaitGroup
 	for _, p := range t.w.partitions {
 		pp := p
@@ -120,8 +135,16 @@ type WriteTask struct {
 
 type WriteTaskResponse struct {
 	batter.TaskerBase
+	Error error
 }
 
 func (t *WriteTask) Execute() (batter.TaskResponse, error) {
-	return nil, nil
+	if t.w.resultWriter != nil {
+		if error := t.w.resultWriter.WriteResults(t.w); error != nil {
+			return &WriteTaskResponse{Error: error}, nil
+		}
+	} else {
+		log.Printf("worker %s has no resultWriter", t.w.WorkerId())
+	}
+	return &WriteTaskResponse{}, nil
 }

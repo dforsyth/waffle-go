@@ -2,13 +2,14 @@ package waffle
 
 import (
 	"batter"
-	"errors"
+	// "errors"
 	"log"
 	"net"
-	"sync"
+	// "sync"
 	"time"
 )
 
+/*
 type phaseFn func(*Worker, PhaseExec) PhaseSummary
 
 var phaseMap map[int]phaseFn = map[int]phaseFn{
@@ -20,6 +21,7 @@ var phaseMap map[int]phaseFn = map[int]phaseFn{
 	PHASE_SUPERSTEP:           step,
 	PHASE_WRITE_RESULTS:       writeResults,
 }
+*/
 
 type phaseStat struct {
 	startTime int
@@ -79,10 +81,13 @@ type Worker struct {
 
 	// Msg queues
 	// msgs  *InMsgQ
-	minq  *batter.InQ
-	moutq *batter.OutQ
-	vinq  *batter.InQ
-	voutq *batter.OutQ
+	minq        *batter.InQ
+	moutq       *batter.OutQ
+	msgs, nmsgs map[string][]Msg
+
+	vinq    *batter.InQ
+	voutq   *batter.OutQ
+	vertBuf map[string][]Vertex
 
 	partitions      map[uint64]*Partition
 	loadAssignments map[string][]string
@@ -132,9 +137,11 @@ func (w *Worker) Partitions() map[uint64]*Partition {
 	return w.partitions
 }
 
+/*
 func (w *Worker) IncomingMsgs() map[string][]Msg {
 	return w.inq.in
 }
+*/
 
 func (w *Worker) SetRpcClient(c WorkerRpcClient) {
 	w.rpcClient = c
@@ -180,6 +187,7 @@ func (w *Worker) SetTopology(ti *TopologyInfo) {
 	}
 }
 
+/*
 // Expose for RPC interface
 func (w *Worker) QueueMessages(msgs []Msg) {
 	go w.inq.addMsgs(msgs)
@@ -189,6 +197,7 @@ func (w *Worker) QueueMessages(msgs []Msg) {
 func (w *Worker) QueueVertices(verts []Vertex) {
 	go w.vinq.addVertices(verts)
 }
+*/
 
 func (w *Worker) AddVertex(v Vertex) {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
@@ -198,7 +207,26 @@ func (w *Worker) AddVertex(v Vertex) {
 	if wid == w.WorkerId() {
 		w.partitions[pid].addVertex(v)
 	} else {
-		w.voutq.addVertex(v)
+		w.SendVertex(wid, v)
+	}
+}
+
+func (w *Worker) SendVertex(workerId string, v Vertex) {
+	w.vertBuf[workerId] = append(w.vertBuf[workerId], v)
+	if len(w.vertBuf[workerId]) >= w.Config.VertexThreshold {
+		vmsg := &VertexMsg{Vertices: w.vertBuf[workerId]}
+		vmsg.SetTarget(workerId)
+		w.voutq.Funnel <- vmsg
+		delete(w.vertBuf, workerId)
+	}
+}
+
+func (w *Worker) FlushVertices() {
+	for workerId, vertices := range w.vertBuf {
+		vmsg := &VertexMsg{Vertices: vertices}
+		vmsg.SetTarget(workerId)
+		w.voutq.Funnel <- vmsg
+		delete(w.vertBuf, workerId)
 	}
 }
 
@@ -212,6 +240,7 @@ func (w *Worker) cleanup() error {
 	return nil
 }
 
+/*
 func loadData(w *Worker, e PhaseExec) PhaseSummary {
 	pe := e.(*LoadDataExec)
 
@@ -263,7 +292,7 @@ func distributeVertices(w *Worker, e PhaseExec) PhaseSummary {
 
 	return ps
 }
-
+*/
 // load from persistence
 func loadPersisted(w *Worker, pe PhaseExec) PhaseSummary {
 	panic("not implemented")
@@ -300,6 +329,7 @@ func recover(w *Worker, pe PhaseExec) PhaseSummary {
 	return nil
 }
 
+/*
 // Prepase for the next superstep (message queue swaps and resets)
 func stepPrepare(w *Worker, e PhaseExec) PhaseSummary {
 	// pe := e.(*StepPrepareExec)
@@ -312,7 +342,9 @@ func stepPrepare(w *Worker, e PhaseExec) PhaseSummary {
 	w.lastStepInfo, w.stepInfo = w.stepInfo, w.lastStepInfo
 	return ps
 }
+*/
 
+/*
 func (w *Worker) persistPartitions() (err error) {
 	if w.persister == nil {
 		log.Printf("worker %s has no persister", w.WorkerId())
@@ -327,7 +359,7 @@ func (w *Worker) persistPartitions() (err error) {
 			verts = append(verts, vlist)
 		}
 		for _, v := range verts {
-			if vmsgs := w.msgs.msgs(v.VertexId()); vmsgs != nil {
+			if vmsgs := w.msgs[v.VertexId()]; vmsgs != nil {
 				msgs = append(msgs, vmsgs...)
 			}
 		}
@@ -421,6 +453,7 @@ func (w *Worker) shutdown() {
 	log.Printf("worker %s shutting down", w.WorkerId())
 	return
 }
+*/
 
 func infoMerge(existing *stepInfo, new *stepInfo) *stepInfo {
 	return nil
@@ -433,24 +466,28 @@ func (w *Worker) Start() {
 	w.moutq, _ = w.CreateMsgOutQueue("m", w.Config.MessageThreshold)
 	w.minq, _ = w.CreateMsgInQueue("m")
 
-	w.Run()
+	w.Run(w.Config.MasterHost, w.Config.MasterPort)
 
-	w.done = make(chan int)
-	for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
-		// TODO: There should be a better check here.  Use an error for an unsuccessful registration, 
-		// but err == nil && jobId == "" should be an error.
-		if err := w.register(); err != nil {
-			panic(err)
+	<-make(chan byte)
+
+	/*
+		w.done = make(chan int)
+		for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
+			// TODO: There should be a better check here.  Use an error for an unsuccessful registration, 
+			// but err == nil && jobId == "" should be an error.
+			if err := w.register(); err != nil {
+				panic(err)
+			}
+			if w.jobId != "" {
+				break
+			}
+			log.Printf("Job registration unsuccessful.  Trying again.")
 		}
-		if w.jobId != "" {
-			break
+		if w.jobId == "" {
+			log.Println("Failed to register for job, shutting down.")
+			w.done <- 1
 		}
-		log.Printf("Job registration unsuccessful.  Trying again.")
-	}
-	if w.jobId == "" {
-		log.Println("Failed to register for job, shutting down.")
-		w.done <- 1
-	}
-	<-w.done
-	w.shutdown()
+		<-w.done
+		w.shutdown()
+	*/
 }

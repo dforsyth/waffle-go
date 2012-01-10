@@ -30,12 +30,12 @@ func (p *Partition) Vertices() map[string]Vertex {
 func (p *Partition) compute() error {
 	// TODO Handle mutations
 	for _, v := range p.verts {
-		msgs := p.worker.msgs.msgs(v.VertexId())
+		msgs := p.worker.msgs[v.VertexId()]
 		if v.IsActive() == false && msgs != nil && len(msgs) > 0 {
 			v.SetActive(true)
 		}
 		if v.IsActive() {
-			v.Compute(p.worker.msgs.msgs(v.VertexId()))
+			v.Compute(p.worker.msgs[v.VertexId()])
 		}
 	}
 	return nil
