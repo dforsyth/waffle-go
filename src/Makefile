@@ -3,7 +3,6 @@ TARG= 	waffle
 GOFILES= 	master.go \
 			rpc.go \
 			msg.go \
-			msgq.go \
 			node.go \
 			partition.go \
 			vertex.go \
@@ -16,7 +15,7 @@ GOFILES= 	master.go \
 			result.go \
 			persist.go \
 			waffle.go \
-			# util/gob_rpc.go \
+			tasks.go \
 			util/gob_persist.go
 
 include $(GOROOT)/src/Make.pkg

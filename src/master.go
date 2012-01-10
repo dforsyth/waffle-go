@@ -544,54 +544,81 @@ func (m *Master) shutdownWorkers() error {
 	return nil
 }
 
-type LoadTask struct {
-	batter.TaskerBase
-	w            *Worker
-	PartitionMap map[uint64]string
-	Assignment   map[string][]string // maybe just bring this down to a []string.  does every worker really need to know what the other loaded?
-}
-
-type LoadTaskResponse struct {
-	batter.TaskerBase
-	Errors      []error
-	TotalLoaded uint64
-}
-
-func (t *LoadTask) Execute() (batter.TaskResponse, error) {
-	// set the partition map
-	t.w.partitionMap = t.PartitionMap
-
-	var assigned []string
-	var ok bool
-	// w is set on the way in
-	if assigned, ok = t.Assignment[t.w.WorkerId()]; !ok {
-		log.Printf("no load assignments for %s", t.w.WorkerId())
-		return &LoadTaskResponse{}, nil
-	}
-	var totalLoaded uint64
-	for _, assignment := range assigned {
-		loaded, err := t.w.loader.Load(t.w, assignment)
-		if err != nil {
-			return &LoadTaskResponse{Errors: []error{err}}, nil
-		}
-		totalLoaded += loaded
-	}
-
-	return &LoadTaskResponse{TotalLoaded: totalLoaded}, nil
-}
-
 func (m *Master) PartitionAndLoad() error {
+	grp := m.CreateTaskGroup("load")
+
 	m.determinePartitions()
+
+	workers := m.Workers()
+	assignments := m.loader.AssignLoad(workers, m.Config.LoadPaths)
+	sendTaskToWorkers(workers, grp, func() batter.Task {
+		return &LoadTask{
+			PartitionMap: m.partitionMap,
+			Assignments:  assignments,
+		}
+	})
+	m.FinishTaskGroup(grp)
+
+	var totalLoaded uint64
+	for resp := range grp.Response {
+		resp := resp.(*LoadTaskResponse)
+		if resp.Errors != nil || len(resp.Errors) > 0 {
+			// TODO: handle errors
+		}
+		totalLoaded += resp.TotalLoaded
+	}
+	log.Printf("Loaded %d vertices", totalLoaded)
+	/*
+		if failed := grp.Failures(); len(failed) > 0 {
+			return NewFailedTasksError(failed)
+		}
+	*/
 	return nil
+}
+
+func (m *Master) Compute() error {
+	workers := m.Workers()
+	for superstep := 0; ; superstep++ {
+		grp := m.CreateTaskGroup("superstep/" + string(superstep))
+		sendTaskToWorkers(workers, grp, func() batter.Task {
+			return &SuperstepTask{}
+		})
+		m.FinishTaskGroup(grp)
+
+		for resp := range grp.Response {
+
+		}
+
+		if active == 0 && sent == 0 {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (m *Master) WriteResults() error {
+	// workers := m.Workers()
+	return nil
+}
+
+// helper to fire off tasks
+func sendTaskToWorkers(workers []string, grp *batter.TaskGroup, taskGen func() batter.Task) {
+	for _, worker := range workers {
+		task := taskGen()
+		task.SetWorkerId(worker)
+		grp.Send <- task
+	}
 }
 
 func (m *Master) Start() {
 	// m.startRPC()
-	go m.Run()
+	m.Run()
 	m.WaitForWorkers(m.Config.MinWorkers)
 	m.CloseRegistration()
 
 	m.PartitionAndLoad()
+	m.Compute()
 
 	// m.registerWorkers()
 	m.determinePartitions()

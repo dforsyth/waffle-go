@@ -1,6 +1,7 @@
 package waffle
 
 import (
+	"batter"
 	"errors"
 	"log"
 	"net"
@@ -53,14 +54,16 @@ type jobStat struct {
 }
 
 type WorkerConfig struct {
-	MessageThreshold int64
-	VertexThreshold  int64
+	MessageThreshold int
+	VertexThreshold  int
 	MasterHost       string
 	MasterPort       string
 	RegisterRetry    uint64
 }
 
 type Worker struct {
+	batter.Worker
+
 	node
 	jobId string
 
@@ -75,11 +78,11 @@ type Worker struct {
 	jobStats   jobStat
 
 	// Msg queues
-	msgs  *InMsgQ
-	inq   *InMsgQ
-	outq  *OutMsgQ
-	vinq  *InVertexQ
-	voutq *OutVertexQ
+	// msgs  *InMsgQ
+	minq  *batter.InQ
+	moutq *batter.OutQ
+	vinq  *batter.InQ
+	voutq *batter.OutQ
 
 	partitions      map[uint64]*Partition
 	loadAssignments map[string][]string
@@ -177,31 +180,6 @@ func (w *Worker) SetTopology(ti *TopologyInfo) {
 	}
 }
 
-// execute a phase function
-func (w *Worker) executePhase(phaseFn phaseFn, exec PhaseExec) {
-	w.phaseStats.reset()
-	w.phaseStats.start()
-	summary := phaseFn(w, exec)
-	w.phaseStats.end()
-	if err := w.sendSummary(summary); err != nil {
-		// handle summary send failure
-		panic(err)
-	}
-}
-
-// Expose for RPC interface
-// ExecPhase only returns a non nil error if the phase cannot be identified
-func (w *Worker) ExecPhase(exec PhaseExec) error {
-	// Determine the phaseId and dispatch
-	var fn phaseFn
-	var ok bool
-	if fn, ok = phaseMap[exec.PhaseId()]; !ok {
-		return errors.New("No valid phase specified")
-	}
-	go w.executePhase(fn, exec)
-	return nil
-}
-
 // Expose for RPC interface
 func (w *Worker) QueueMessages(msgs []Msg) {
 	go w.inq.addMsgs(msgs)
@@ -226,37 +204,6 @@ func (w *Worker) AddVertex(v Vertex) {
 
 func (w *Worker) sendSummary(ps PhaseSummary) error {
 	return w.rpcClient.SendSummary(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), ps)
-}
-
-// Register step
-func (w *Worker) register() (err error) {
-	log.Println("Trying to register")
-	if w.jobId, err = w.rpcClient.Register(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), w.Host(), w.Port()); err != nil {
-		return
-	}
-	log.Printf("Registered as %s for job %s", w.WorkerId(), w.jobId)
-	go w.masterEkg()
-	return
-}
-
-func (w *Worker) masterEkg() {
-	remote, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort))
-	if err != nil {
-		panic("failed to resolve master tcpaddr")
-	}
-	for {
-		if conn, err := net.DialTCP("tcp", nil, remote); err != nil {
-			log.Printf("could not connect to master, shutting down")
-			w.done <- 1
-		} else {
-			log.Printf("connected to master")
-			conn.Close()
-		}
-		select {
-		case <-time.After(10 * 1e9):
-			// need to add a channel to kill this on cleanup/job end
-		}
-	}
 }
 
 func (w *Worker) cleanup() error {
@@ -475,14 +422,18 @@ func (w *Worker) shutdown() {
 	return
 }
 
-func (w *Worker) Run() {
-	w.rpcServ.Start(w)
+func infoMerge(existing *stepInfo, new *stepInfo) *stepInfo {
+	return nil
+}
 
-	w.msgs = newInMsgQ()
-	w.inq = newInMsgQ()
-	w.outq = newOutMsgQ(w, w.Config.MessageThreshold)
-	w.vinq = newInVertexQ()
-	w.voutq = newOutVertexQ(w, w.Config.VertexThreshold)
+func (w *Worker) Start() {
+	w.voutq, _ = w.CreateMsgOutQueue("v", w.Config.VertexThreshold)
+	w.vinq, _ = w.CreateMsgInQueue("v")
+
+	w.moutq, _ = w.CreateMsgOutQueue("m", w.Config.MessageThreshold)
+	w.minq, _ = w.CreateMsgInQueue("m")
+
+	w.Run()
 
 	w.done = make(chan int)
 	for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
