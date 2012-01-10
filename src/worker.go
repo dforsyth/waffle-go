@@ -9,20 +9,6 @@ import (
 	"time"
 )
 
-/*
-type phaseFn func(*Worker, PhaseExec) PhaseSummary
-
-var phaseMap map[int]phaseFn = map[int]phaseFn{
-	PHASE_LOAD_DATA:           loadData,
-	PHASE_DISTRIBUTE_VERTICES: distributeVertices,
-	PHASE_LOAD_PERSISTED:      loadPersisted,
-	PHASE_RECOVER:             recover,
-	PHASE_STEP_PREPARE:        stepPrepare,
-	PHASE_SUPERSTEP:           step,
-	PHASE_WRITE_RESULTS:       writeResults,
-}
-*/
-
 type phaseStat struct {
 	startTime int
 	endTime   int
@@ -58,6 +44,8 @@ type jobStat struct {
 type WorkerConfig struct {
 	MessageThreshold int
 	VertexThreshold  int
+	Host             string
+	Port             string
 	MasterHost       string
 	MasterPort       string
 	RegisterRetry    uint64
@@ -99,8 +87,8 @@ type Worker struct {
 
 	stepInfo, lastStepInfo *stepInfo
 
-	rpcClient WorkerRpcClient
-	rpcServ   WorkerRpcServer
+	mClient batter.WorkerMasterClient
+	wClient batter.WorkerWorkerClient
 
 	endCh chan *PhaseSummary
 
@@ -141,7 +129,6 @@ func (w *Worker) Partitions() map[uint64]*Partition {
 func (w *Worker) IncomingMsgs() map[string][]Msg {
 	return w.inq.in
 }
-*/
 
 func (w *Worker) SetRpcClient(c WorkerRpcClient) {
 	w.rpcClient = c
@@ -150,6 +137,7 @@ func (w *Worker) SetRpcClient(c WorkerRpcClient) {
 func (w *Worker) SetRpcServer(s WorkerRpcServer) {
 	w.rpcServ = s
 }
+*/
 
 // The loader handles loading vertices and edges from the initial data source
 func (w *Worker) SetLoader(l Loader) {
@@ -228,16 +216,6 @@ func (w *Worker) FlushVertices() {
 		w.voutq.Funnel <- vmsg
 		delete(w.vertBuf, workerId)
 	}
-}
-
-func (w *Worker) sendSummary(ps PhaseSummary) error {
-	return w.rpcClient.SendSummary(net.JoinHostPort(w.Config.MasterHost, w.Config.MasterPort), ps)
-}
-
-func (w *Worker) cleanup() error {
-	// w.rpcClient.Cleanup()
-	// w.rpcServ.Cleanup()
-	return nil
 }
 
 /*
@@ -460,6 +438,8 @@ func infoMerge(existing *stepInfo, new *stepInfo) *stepInfo {
 }
 
 func (w *Worker) Start() {
+	w.Init(w.Config.Host, w.Config.Port, w.mClient, w.wClient)
+
 	w.voutq, _ = w.CreateMsgOutQueue("v", w.Config.VertexThreshold)
 	w.vinq, _ = w.CreateMsgInQueue("v")
 
