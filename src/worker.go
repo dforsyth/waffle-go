@@ -446,6 +446,12 @@ func (w *Worker) Start() {
 	w.moutq, _ = w.CreateMsgOutQueue("m", w.Config.MessageThreshold)
 	w.minq, _ = w.CreateMsgInQueue("m")
 
+	w.OnTaskReceive(func(t batter.Task) {
+		if t, ok := t.(WaffleTask); ok {
+			t.SetWorker(w)
+		}
+	})
+
 	w.Run(w.Config.MasterHost, w.Config.MasterPort)
 
 	<-make(chan byte)
