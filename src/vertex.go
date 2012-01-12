@@ -4,7 +4,7 @@ type Vertex interface {
 	VertexId() string
 	SetVertexId(string)
 	Compute([]Msg)
-	AddOutEdgeTo(string, Edge)
+	// AddOutEdgeTo(string, Edge)
 	AddOutEdge(Edge)
 	OutEdges() []Edge
 	SetPartition(*Partition) // have to leave this exported for partition assignment
@@ -99,7 +99,10 @@ func (v *VertexBase) Superstep() uint64 {
 }
 
 func (v *VertexBase) SendMessageTo(dest string, msg Msg) {
-	msg.SetTarget(dest)
+	pid := v.part.worker.partitionOf(dest)
+	wid := v.part.worker.partitionMap[pid]
+	msg.SetVertexId(dest)
+	msg.SetTarget(wid)
 	v.part.worker.moutq.Funnel <- msg
 }
 

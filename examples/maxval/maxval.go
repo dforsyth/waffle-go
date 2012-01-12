@@ -154,7 +154,7 @@ func combine(msgs []batter.Msg) []batter.Msg {
 			maxMsg = msg.(*MaxValueMsg)
 		}
 	}
-	return []waffle.Msg{maxMsg}
+	return []batter.Msg{maxMsg}
 }
 
 // Do work

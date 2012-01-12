@@ -2,7 +2,6 @@ package waffle
 
 import (
 	"batter"
-	"log"
 	"net"
 	"time"
 )
@@ -118,19 +117,6 @@ func (w *Worker) SetPersister(p Persister) {
 	w.persister = p
 }
 
-// Expose for RPC interface
-func (w *Worker) SetTopology(ti *TopologyInfo) {
-	w.partitionMap = ti.PartitionMap
-	log.Printf("partitions and load assignments set")
-
-	for pid, hp := range w.partitionMap {
-		if hp == w.WorkerId() {
-			w.partitions[pid] = NewPartition(pid, w)
-			log.Printf("created partition %d on %s", pid, w.WorkerId())
-		}
-	}
-}
-
 func (w *Worker) AddVertex(v Vertex) {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
 	// we can send it to the correct worker
@@ -160,42 +146,6 @@ func (w *Worker) FlushVertices() {
 		w.voutq.Funnel <- vmsg
 		delete(w.vertBuf, workerId)
 	}
-}
-
-// load from persistence
-func loadPersisted(w *Worker, pe PhaseExec) PhaseSummary {
-	panic("not implemented")
-	/*
-		superstep := pe.Superstep
-		if w.persister != nil {
-			for _, part := range w.partitions {
-				vertices, inbound, err := w.persister.LoadPartition(part.id, superstep)
-				if err != nil {
-					return err
-				}
-				for _, vertex := range vertices {
-					part.addVertex(vertex)
-				}
-				w.inq.addMsgs(inbound)
-			}
-		} else {
-			log.Printf("worker %s has no persister", w.WorkerId())
-		}
-	*/
-	return nil
-}
-
-// Set the recovered superstep
-func recover(w *Worker, pe PhaseExec) PhaseSummary {
-	panic("not implemented")
-	/*
-		w.stepInfo.superstep = pe.Superstep
-		// to get through the increment check in step()
-		if w.stepInfo.superstep > 0 {
-			w.lastStepInfo.superstep -= 1
-		}
-	*/
-	return nil
 }
 
 /*
@@ -240,88 +190,6 @@ func (w *Worker) persistPartitions() (err error) {
 	return
 }
 
-// Execute a single superstep
-func step(w *Worker, e PhaseExec) PhaseSummary {
-	pe := e.(*SuperstepExec)
-
-	ps := &SuperstepSummary{
-		Aggregates: make(map[string]interface{}),
-	}
-	ps.WId = w.WorkerId()
-
-	superstep, checkpoint := pe.Superstep, pe.Checkpoint
-	if superstep > 0 && w.lastStepInfo.superstep+1 != superstep {
-		ps.Error = "Superstep did not increment by one"
-		return ps
-	}
-
-	// set the step info fields for superstep and checkpoint
-	w.stepInfo.superstep, w.stepInfo.checkpoint = superstep, checkpoint
-
-	if w.stepInfo.checkpoint {
-		if err := w.persistPartitions(); err != nil {
-			ps.Error = err.Error()
-			return ps
-		}
-	}
-
-	// reset aggregators
-	for _, aggr := range w.aggregators {
-		aggr.Reset()
-	}
-
-	w.stepInfo.aggregates = pe.Aggregates
-
-	var wg sync.WaitGroup
-	// XXX limit max routines?
-	// XXX use real threads?
-	for _, p := range w.partitions {
-		pp := p
-		wg.Add(1)
-		go func() {
-			pp.compute()
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-
-	// Flush the outq and wait for any messages that haven't been sent yet
-	w.outq.flush()
-	w.outq.wait.Wait()
-
-	for key, aggr := range w.aggregators {
-		ps.Aggregates[key] = aggr.ReduceAndEmit()
-	}
-
-	ps.SentMsgs = w.outq.numSent()
-	for _, p := range w.partitions {
-		ps.ActiveVerts += p.numActiveVertices()
-	}
-
-	log.Printf("Superstep %d complete", w.stepInfo.superstep)
-	log.Printf("sent %d messages and have %d active verts", ps.SentMsgs, ps.ActiveVerts)
-	return ps
-}
-
-func writeResults(w *Worker, pe PhaseExec) PhaseSummary {
-	// XXX temp kill until i add a shutdown phase
-	defer func() { w.done <- 1 }() // XXX sometimes this kills before the summary for the phase is sent
-	ps := &WriteResultsSummary{}
-	ps.WId = w.WorkerId()
-	if w.resultWriter != nil {
-		if err := w.resultWriter.WriteResults(w); err != nil {
-			ps.Error = err.Error()
-		}
-	} else {
-		log.Println("worker %s has no resultWriter", w.WorkerId())
-	}
-	return ps
-}
-
-func (w *Worker) shutdown() {
-	log.Printf("worker %s shutting down", w.WorkerId())
-	return
-}
 */
 
 func (w *Worker) Start() {

@@ -1,5 +1,6 @@
 package waffle
 
+/*
 type WorkerRpcClient interface {
 	// Init()
 	Register(string, string, string) (string, error)
@@ -25,3 +26,4 @@ type WorkerRpcServer interface {
 	Start(*Worker)
 	// Cleanup()
 }
+*/

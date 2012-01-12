@@ -38,6 +38,12 @@ type LoadTaskResponse struct {
 func (t *LoadTask) Execute() (batter.TaskResponse, error) {
 	// set the partition map
 	t.w.partitionMap = t.PartitionMap
+	for pid, hp := range t.w.partitionMap {
+		if hp == t.w.WorkerId() {
+			t.w.partitions[pid] = NewPartition(pid, t.w)
+			log.Printf("created partition %d on %s", pid, t.w.WorkerId())
+		}
+	}
 
 	var assigned []string
 	var ok bool
