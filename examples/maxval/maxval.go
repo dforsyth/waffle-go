@@ -1,6 +1,7 @@
 package main
 
 import (
+	"batter"
 	"bufio"
 	"encoding/gob"
 	"errors"
@@ -143,10 +144,7 @@ func (rw *MaxValueResultWriter) WriteResults(w *waffle.Worker) error {
 }
 
 // Combine to a single max value message
-type MaxValueCombiner struct {
-}
-
-func (c *MaxValueCombiner) Combine(msgs []waffle.Msg) []waffle.Msg {
+func combine(msgs []batter.Msg) []batter.Msg {
 	if len(msgs) == 0 {
 		return msgs
 	}
@@ -266,7 +264,7 @@ func main() {
 		w.SetLoader(loader)
 		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
-		w.AddCombiner(&MaxValueCombiner{})
+		w.AddCombiner(combine)
 		w.AddAggregator(&TimingAggregator{})
 		w.Run()
 	}

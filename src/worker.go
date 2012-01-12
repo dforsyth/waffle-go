@@ -162,59 +162,6 @@ func (w *Worker) FlushVertices() {
 	}
 }
 
-/*
-func loadData(w *Worker, e PhaseExec) PhaseSummary {
-	pe := e.(*LoadDataExec)
-
-	ps := &LoadDataSummary{}
-	ps.WId = w.WorkerId()
-
-	var thisWorker []string
-	var ok bool
-	if thisWorker, ok = pe.LoadAssignments[w.WorkerId()]; !ok {
-		log.Printf("no load assignments for worker %s", w.WorkerId())
-		return ps
-	}
-
-	if w.loader == nil {
-		ps.Error = "No loader to load assignment on worker " + w.WorkerId()
-		return ps
-	}
-
-	var totalLoaded uint64 = 0
-	for _, path := range thisWorker {
-		if loaded, err := w.loader.Load(w, path); err != nil {
-			log.Printf("Error loading data: %v", err)
-			ps.Error = err.Error()
-			return ps
-		} else {
-			totalLoaded += loaded
-		}
-	}
-
-	log.Printf("loaded %d vertices", totalLoaded)
-	w.voutq.flush()
-	w.voutq.wait.Wait()
-	return ps
-}
-
-func distributeVertices(w *Worker, e PhaseExec) PhaseSummary {
-	// pe := e.(*LoadRecievedExec)
-	ps := &LoadRecievedSummary{}
-	ps.WId = w.WorkerId()
-
-	for _, v := range w.vinq.verts {
-		w.AddVertex(v)
-	}
-
-	for _, p := range w.partitions {
-		ps.TotalVerts += p.numVertices()
-		ps.ActiveVerts += p.numActiveVertices()
-	}
-
-	return ps
-}
-*/
 // load from persistence
 func loadPersisted(w *Worker, pe PhaseExec) PhaseSummary {
 	panic("not implemented")

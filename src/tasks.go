@@ -105,6 +105,10 @@ func (t *SuperstepTask) Execute() (batter.TaskResponse, error) {
 		// persist
 	}
 
+	for _, aggr := range t.w.aggregators {
+		aggr.Reset()
+	}
+
 	var pWait sync.WaitGroup
 	collectCh := make(chan *stepInfo, len(t.w.partitions))
 	for _, p := range t.w.partitions {

@@ -3,7 +3,6 @@ package waffle
 import (
 	"batter"
 	"log"
-	"sync"
 )
 
 type MasterConfig struct {
@@ -47,11 +46,6 @@ type Master struct {
 
 	Config  MasterConfig
 	jobInfo jobInfo
-
-	workerPool map[string]*workerInfo
-	poolLock   sync.RWMutex
-
-	phase int
 
 	checkpointFn func(uint64) bool
 
@@ -108,42 +102,30 @@ func (m *Master) determinePartitions() {
 
 // Move partitions of wid to another worker
 func (m *Master) movePartitions(moveId string) error {
-	// XXX for now, we just move the partitions for dead nodes to the first worker we get on map iteration.  Make this intelligent later.
-	// Have this function return error so that we can fail if there is some kind of assignment overflow in the future heuristic
-	var newOwner string
-	for hostPort := range m.workerPool {
-		if hostPort != moveId {
-			newOwner = hostPort
-			break
+	/*
+		// XXX for now, we just move the partitions for dead nodes to the first worker we get on map iteration.  Make this intelligent later.
+		// Have this function return error so that we can fail if there is some kind of assignment overflow in the future heuristic
+		var newOwner string
+		for hostPort := range m.workerPool {
+			if hostPort != moveId {
+				newOwner = hostPort
+				break
+			}
 		}
-	}
-	for pid, wid := range m.partitionMap {
-		if wid == moveId {
-			log.Printf("moving partition %d from %s to %s", pid, moveId, newOwner)
-			m.partitionMap[pid] = newOwner
+		for pid, wid := range m.partitionMap {
+			if wid == moveId {
+				log.Printf("moving partition %d from %s to %s", pid, moveId, newOwner)
+				m.partitionMap[pid] = newOwner
+			}
 		}
-	}
+	*/
+	panic("not implemented")
 	return nil
 }
 
 // shutdown workers
 func (m *Master) shutdownWorkers() error {
-	for _, info := range m.workerPool {
-		info.heartbeatCh <- 1
-	}
-	/*
-		if e := m.sendToAllWorkers("Worker.EndJob", &BasicMasterMsg{JobId: m.Config.JobId}, nil); e != nil {
-			panic(e)
-		}
-		// don't wait for a notify on this call	
-		log.Printf("Killing ekgs and closing worker rpc clients")
-		for wid, info := range m.wInfo {
-			info.ekgch <- 1
-			if cl, e := m.cl(wid); e == nil {
-				cl.Close()
-			}
-		}
-	*/
+	panic("not implemented")
 	return nil
 }
 
