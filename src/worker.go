@@ -2,10 +2,8 @@ package waffle
 
 import (
 	"batter"
-	// "errors"
 	"log"
 	"net"
-	// "sync"
 	"time"
 )
 
@@ -29,12 +27,10 @@ func (s *phaseStat) end() {
 }
 
 type stepInfo struct {
-	activeVertices uint64
-	numVertices    uint64
-	sentMsgs       uint64
-	superstep      uint64
-	checkpoint     bool
-	aggregates     map[string]interface{}
+	Active uint64
+	Total  uint64
+	Sent   uint64
+	Aggrs  map[string]interface{}
 }
 
 type jobStat struct {
@@ -83,14 +79,9 @@ type Worker struct {
 	loader       Loader
 	resultWriter ResultWriter
 	persister    Persister
-	combiners    []Combiner
-
-	stepInfo, lastStepInfo *stepInfo
 
 	mClient batter.WorkerMasterClient
 	wClient batter.WorkerWorkerClient
-
-	endCh chan *PhaseSummary
 
 	done chan int
 }
@@ -100,44 +91,17 @@ func NewWorker(addr, port string) *Worker {
 		partitions: make(map[uint64]*Partition),
 	}
 
-	w.stepInfo, w.lastStepInfo = &stepInfo{}, &stepInfo{}
-
 	w.initNode(addr, port)
-
 	return w
 }
-
-// Most of this stuff is exposed for persisters
 
 func (w *Worker) WorkerId() string {
 	return net.JoinHostPort(w.host, w.port)
 }
 
-func (w *Worker) Superstep() uint64 {
-	// XXX ehhh, maybe its best to get rid of the alternating step infos...
-	if w.stepInfo == nil {
-		return 0
-	}
-	return w.stepInfo.superstep
-}
-
 func (w *Worker) Partitions() map[uint64]*Partition {
 	return w.partitions
 }
-
-/*
-func (w *Worker) IncomingMsgs() map[string][]Msg {
-	return w.inq.in
-}
-
-func (w *Worker) SetRpcClient(c WorkerRpcClient) {
-	w.rpcClient = c
-}
-
-func (w *Worker) SetRpcServer(s WorkerRpcServer) {
-	w.rpcServ = s
-}
-*/
 
 // The loader handles loading vertices and edges from the initial data source
 func (w *Worker) SetLoader(l Loader) {
@@ -154,14 +118,6 @@ func (w *Worker) SetPersister(p Persister) {
 	w.persister = p
 }
 
-// Add a message combiner
-func (w *Worker) AddCombiner(c Combiner) {
-	if w.combiners == nil {
-		w.combiners = make([]Combiner, 0)
-	}
-	w.combiners = append(w.combiners, c)
-}
-
 // Expose for RPC interface
 func (w *Worker) SetTopology(ti *TopologyInfo) {
 	w.partitionMap = ti.PartitionMap
@@ -174,18 +130,6 @@ func (w *Worker) SetTopology(ti *TopologyInfo) {
 		}
 	}
 }
-
-/*
-// Expose for RPC interface
-func (w *Worker) QueueMessages(msgs []Msg) {
-	go w.inq.addMsgs(msgs)
-}
-
-// Expose for RPC interface
-func (w *Worker) QueueVertices(verts []Vertex) {
-	go w.vinq.addVertices(verts)
-}
-*/
 
 func (w *Worker) AddVertex(v Vertex) {
 	// determine the partition for v.  if it is not on this worker, add v to voutq so
@@ -432,10 +376,6 @@ func (w *Worker) shutdown() {
 	return
 }
 */
-
-func infoMerge(existing *stepInfo, new *stepInfo) *stepInfo {
-	return nil
-}
 
 func (w *Worker) Start() {
 	w.Init(w.Config.Host, w.Config.Port, w.mClient, w.wClient)

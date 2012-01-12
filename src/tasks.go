@@ -90,14 +90,14 @@ type SuperstepTask struct {
 	WaffleTaskBase
 	Superstep  uint64
 	Checkpoint bool
-	Aggr       map[string]interface{}
+	Aggrs      map[string]interface{}
 }
 
 type SuperstepTaskResponse struct {
 	batter.TaskerBase
 	Errors []error
 	Info   *stepInfo
-	Aggr   map[string]interface{}
+	Aggrs  map[string]interface{}
 }
 
 func (t *SuperstepTask) Execute() (batter.TaskResponse, error) {
@@ -106,26 +106,34 @@ func (t *SuperstepTask) Execute() (batter.TaskResponse, error) {
 	}
 
 	var pWait sync.WaitGroup
+	collectCh := make(chan *stepInfo, len(t.w.partitions))
 	for _, p := range t.w.partitions {
 		pp := p
 		pWait.Add(1)
 		go func() {
-			pp.compute()
+			pp.compute(t.Superstep, t.Aggrs, collectCh)
 			pWait.Done()
 		}()
 	}
 	pWait.Wait()
+
+	collected := newStepInfo()
+	for info := range collectCh {
+		collected = collectStepData(collected, info)
+	}
+
 	// drain and restart moutq
 	errors := t.w.moutq.Finish()
+	collected.Sent = uint64(t.w.moutq.Sent())
 	t.w.moutq.Start()
 
-	collected := &stepInfo{}
-	/*
-		for info := range <-collectCh {
-			collected = infoMerge(collected, info)
-		}
-	*/
-	return &SuperstepTaskResponse{Info: collected, Errors: errors, Aggr: nil}, nil
+	// collect aggregate values
+	aggrs := make(map[string]interface{})
+	for name, aggr := range t.w.aggregators {
+		aggrs[name] = aggr.ReduceAndEmit()
+	}
+
+	return &SuperstepTaskResponse{Info: collected, Errors: errors, Aggrs: aggrs}, nil
 }
 
 type WriteTask struct {

@@ -257,7 +257,7 @@ func main() {
 	} else {
 		w := waffle.NewWorker(host, port)
 		w.Config.MessageThreshold = 1000
-		w.Config.VertexThreshold = 1000
+		w.Config.VertexThreshold = 100
 
 		w.Config.MasterHost, w.Config.MasterPort, _ = net.SplitHostPort(maddr)
 

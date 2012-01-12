@@ -20,7 +20,7 @@ type VertexBase struct {
 	// XXX This is an interface because RPC breaks if it's a *Partition even
 	// though it isn't exported.  Apparently the gob encoder tries to get to
 	// it, and the rpc types in Worker break the encoder.  Investigate later.
-	part interface{}
+	part *Partition // interface{}
 }
 
 func (v *VertexBase) VertexId() string {
@@ -95,20 +95,20 @@ func (v *VertexBase) AddVertex(vert Vertex) {
 */
 
 func (v *VertexBase) Superstep() uint64 {
-	return v.part.(*Partition).worker.stepInfo.superstep
+	return v.part.superstep
 }
 
 func (v *VertexBase) SendMessageTo(dest string, msg Msg) {
 	msg.SetTarget(dest)
-	v.part.(*Partition).worker.moutq.Funnel <- msg
+	v.part.worker.moutq.Funnel <- msg
 }
 
 func (v *VertexBase) Worker() *Worker {
-	return v.part.(*Partition).worker
+	return v.part.worker
 }
 
 func (v *VertexBase) Partition() *Partition {
-	return v.part.(*Partition)
+	return v.part
 }
 
 func (v *VertexBase) SetPartition(p *Partition) {
@@ -128,17 +128,17 @@ func (v *VertexBase) IsActive() bool {
 }
 
 func (v *VertexBase) NumVertices() uint64 {
-	return v.part.(*Partition).worker.jobStats.numVertices
+	return v.part.worker.jobStats.numVertices
 }
 
 func (v *VertexBase) SubmitToAggregator(name string, val interface{}) {
-	if aggr, ok := v.part.(*Partition).worker.aggregators[name]; ok {
+	if aggr, ok := v.part.worker.aggregators[name]; ok {
 		aggr.Submit(val)
 	}
 }
 
 func (v *VertexBase) AggregateValue(name string) interface{} {
-	if val, ok := v.part.(*Partition).worker.stepInfo.aggregates[name]; ok {
+	if val, ok := v.part.aggregates[name]; ok {
 		return val
 	}
 	return nil

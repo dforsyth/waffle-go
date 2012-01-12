@@ -51,8 +51,7 @@ type Master struct {
 	workerPool map[string]*workerInfo
 	poolLock   sync.RWMutex
 
-	phase     int
-	barrierCh chan barrierEntry
+	phase int
 
 	checkpointFn func(uint64) bool
 
@@ -62,66 +61,8 @@ type Master struct {
 	client batter.MasterWorkerClient
 }
 
-type barrierEntry interface {
-	WorkerId() string
-}
-
-type barrierRemove struct {
-	hostPort string
-	error    error
-}
-
-func (e *barrierRemove) WorkerId() string {
-	return e.hostPort
-}
-
-func (m *Master) EnterBarrier(summary PhaseSummary) error {
-	go func() {
-		m.barrierCh <- summary
-	}()
-	return nil
-}
-
-func (m *Master) barrier(ch chan barrierEntry) (collected []PhaseSummary, lost []string) {
-	// create a map of workers to wait for using the current workerpool
-	barrier := make(map[string]interface{})
-	for hostPort := range m.workerPool {
-		barrier[hostPort] = nil
-	}
-	if len(barrier) == 0 {
-		log.Println("initial barrier map is empty!")
-		return
-	}
-	// wait on the barrier channel
-	for e := range ch {
-		if _, ok := barrier[e.WorkerId()]; !ok {
-			log.Printf("%s is not in the barrier map, discaring entry", e.WorkerId())
-			continue
-		}
-
-		switch entry := e.(type) {
-		case PhaseSummary:
-			log.Printf("%s is entering the barrier", entry.WorkerId())
-			collected = append(collected, entry)
-		case *barrierRemove:
-			log.Printf("removing %s from barrier map", entry.WorkerId())
-			lost = append(lost, entry.hostPort)
-		}
-		delete(barrier, e.WorkerId())
-
-		if len(barrier) == 0 {
-			// barrier is empty, all of the workers we have been waiting for are accounted for
-			return
-		}
-	}
-	panic("not reached")
-	return
-}
-
 func NewMaster(addr, port string) *Master {
-	m := &Master{
-		barrierCh: make(chan barrierEntry),
-	}
+	m := &Master{}
 
 	m.initNode(addr, port)
 	m.checkpointFn = func(superstep uint64) bool {
@@ -164,97 +105,6 @@ func (m *Master) determinePartitions() {
 
 	log.Printf("Assigned %d partitions to %d workers", len(m.partitionMap), len(workers))
 }
-
-/*
-
-func (m *Master) stepPrepare() error {
-	m.phase = PHASE_STEP_PREPARE
-
-	exec := &StepPrepareExec{}
-	exec.JId = m.Config.JobId
-	exec.PId = m.phase
-
-	_, lost := m.executePhase(exec)
-	if lost != nil {
-
-	}
-	return nil
-}
-
-type stepStat struct {
-	superstep                         uint64
-	activeVerts, sentMsgs, totalVerts uint64
-	aggregates                        map[string]interface{}
-}
-
-func (m *Master) superstep(last *stepStat) (*stepStat, error) {
-	m.phase = PHASE_SUPERSTEP
-
-	superstep := uint64(0)
-	if last != nil {
-		superstep = last.superstep + 1
-	}
-	log.Printf("--------- superstep %d ---------", superstep)
-	exec := &SuperstepExec{
-		Superstep:  superstep,
-		Aggregates: make(map[string]interface{}),
-	}
-	exec.JId = m.Config.JobId
-	exec.PId = m.phase
-
-	if last != nil {
-		for key, val := range last.aggregates {
-			exec.Aggregates[key] = val
-		}
-	}
-	for _, aggr := range m.aggregators {
-		aggr.Reset()
-	}
-
-	summaries, lost := m.executePhase(exec)
-	if lost != nil {
-
-	}
-
-	stepStats := &stepStat{
-		superstep:  superstep,
-		aggregates: make(map[string]interface{}),
-	}
-	for _, summary := range summaries {
-		if stepSummary, ok := summary.(*SuperstepSummary); ok {
-			stepStats.activeVerts += stepSummary.ActiveVerts
-			stepStats.sentMsgs += stepSummary.SentMsgs
-			stepStats.totalVerts += stepSummary.TotalVerts
-			for key, val := range stepSummary.Aggregates {
-				m.aggregators[key].Submit(val)
-			}
-		} else {
-			log.Printf("got a bad summary type back")
-		}
-	}
-	for key, aggr := range m.aggregators {
-		stepStats.aggregates[key] = aggr.ReduceAndEmit()
-	}
-	log.Printf("------------ end %d -----------", superstep)
-	return stepStats, nil
-}
-
-func (m *Master) compute() {
-	var stats *stepStat
-	var error error
-	for {
-		m.stepPrepare()
-		stats, error = m.superstep(stats)
-		if error != nil {
-			panic(error)
-		}
-		if stats.activeVerts == 0 && stats.sentMsgs == 0 {
-			log.Printf("activeVerts: %d, sentMsgs: %d", stats.activeVerts, stats.sentMsgs)
-			break
-		}
-	}
-}
-*/
 
 // Move partitions of wid to another worker
 func (m *Master) movePartitions(moveId string) error {
@@ -329,31 +179,88 @@ func (m *Master) PartitionAndLoad() error {
 	return nil
 }
 
+func newStepInfo() *stepInfo {
+	return &stepInfo{
+		Aggrs: make(map[string]interface{}),
+	}
+}
+
+func collectStepData(collected *stepInfo, data *stepInfo) *stepInfo {
+	collected.Active += data.Active
+	collected.Total += data.Total
+	collected.Sent += data.Sent
+	return collected
+}
+
 func (m *Master) Compute() error {
+	var lastCollected *stepInfo
 	workers := m.Workers()
 	for superstep := 0; ; superstep++ {
 		grp := m.CreateTaskGroup("superstep/" + string(superstep))
 		sendTaskToWorkers(workers, grp, func() batter.Task {
-			return &SuperstepTask{}
+			return &SuperstepTask{
+				Superstep: uint64(superstep),
+				Aggrs:     lastCollected.Aggrs,
+			}
 		})
 		m.FinishTaskGroup(grp)
 
-		for resp := range grp.Response {
-			_ = resp.(*SuperstepTaskResponse)
-
+		collected := newStepInfo()
+		for _, aggr := range m.aggregators {
+			aggr.Reset()
 		}
-		/*
-			if active == 0 && sent == 0 {
-				break
+		for resp := range grp.Response {
+			resp := resp.(*SuperstepTaskResponse)
+			if len(resp.Errors) > 0 {
+				// XXX report errors
+				panic("stuff failed")
+				// return resp.Errors[0]
 			}
-		*/
+			collected = collectStepData(collected, resp.Info)
+			for name, val := range resp.Aggrs {
+				if aggr, ok := m.aggregators[name]; ok {
+					aggr.Submit(val)
+				}
+			}
+		}
+
+		failed := grp.Failures()
+		if len(failed) > 0 {
+			panic("stuff failed")
+			// return NewPhaseFailureError(failed)
+		}
+
+		for name, aggr := range m.aggregators {
+			collected.Aggrs[name] = aggr.ReduceAndEmit()
+		}
+
+		if collected.Active == 0 && collected.Sent == 0 {
+			break
+		}
+
+		lastCollected = collected
 	}
 
 	return nil
 }
 
 func (m *Master) WriteResults() error {
-	// workers := m.Workers()
+	workers := m.Workers()
+	grp := m.CreateTaskGroup("write")
+	sendTaskToWorkers(workers, grp, func() batter.Task {
+		return &WriteTask{}
+	})
+	m.FinishTaskGroup(grp)
+	for resp := range grp.Response {
+		resp := resp.(*WriteTaskResponse)
+		if resp.Error != nil {
+			panic("stuff failed")
+		}
+	}
+	failed := grp.Failures()
+	if len(failed) > 0 {
+		panic("stuff failed")
+	}
 	return nil
 }
 

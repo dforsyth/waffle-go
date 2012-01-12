@@ -1,9 +1,11 @@
 package waffle
 
 type Partition struct {
-	id     uint64
-	verts  map[string]Vertex
-	worker *Worker
+	id         uint64
+	verts      map[string]Vertex
+	worker     *Worker
+	superstep  uint64
+	aggregates map[string]interface{}
 }
 
 func NewPartition(id uint64, w *Worker) *Partition {
@@ -27,15 +29,24 @@ func (p *Partition) Vertices() map[string]Vertex {
 	return p.verts
 }
 
-func (p *Partition) compute() error {
+func (p *Partition) compute(superstep uint64, aggregates map[string]interface{}, collectCh chan *stepInfo) error {
+	// set the info for the step we're computing
+	p.superstep = superstep
+	p.aggregates = aggregates
+
 	// TODO Handle mutations
+	collected := newStepInfo()
 	for _, v := range p.verts {
+		collected.Total++
 		msgs := p.worker.msgs[v.VertexId()]
 		if v.IsActive() == false && msgs != nil && len(msgs) > 0 {
 			v.SetActive(true)
 		}
 		if v.IsActive() {
 			v.Compute(p.worker.msgs[v.VertexId()])
+		}
+		if v.IsActive() {
+			collected.Active++
 		}
 	}
 	return nil
