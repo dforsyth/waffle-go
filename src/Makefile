@@ -9,7 +9,6 @@ GOFILES= 	master.go \
 			edge.go \
 			loader.go \
 			worker.go \
-			combiner.go \
 			aggregator.go \
 			result.go \
 			persist.go \
