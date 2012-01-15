@@ -2,6 +2,7 @@ package waffle
 
 import (
 	"batter"
+	"log"
 	"net"
 	"time"
 )
@@ -181,8 +182,7 @@ func stepPrepare(w *Worker, e PhaseExec) PhaseSummary {
 }
 */
 
-/*
-func (w *Worker) persistPartitions() (err error) {
+func (w *Worker) persistPartitions(superstep uint64) (err error) {
 	if w.persister == nil {
 		log.Printf("worker %s has no persister", w.WorkerId())
 		return
@@ -200,15 +200,13 @@ func (w *Worker) persistPartitions() (err error) {
 				msgs = append(msgs, vmsgs...)
 			}
 		}
-		if err = w.persister.PersistPartition(pid, w.stepInfo.superstep, verts, msgs); err != nil {
+		if err = w.persister.PersistPartition(pid, superstep, verts, msgs); err != nil {
 			return
 		}
-		log.Printf("partition %d, superstep %d: persisted %d vertices, %d messages", pid, w.stepInfo.superstep, len(verts), len(msgs))
+		log.Printf("partition %d, superstep %d: persisted %d vertices, %d messages", pid, superstep, len(verts), len(msgs))
 	}
 	return
 }
-
-*/
 
 func (w *Worker) AddCombiner(fn func([]batter.Msg) []batter.Msg) {
 	w.combiners = append(w.combiners, fn)

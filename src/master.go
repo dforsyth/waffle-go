@@ -208,8 +208,9 @@ func (m *Master) Compute() error {
 		grp = m.CreateTaskGroup("superstep/" + strconv.Itoa(superstep))
 		sendTaskToWorkers(workers, grp, func() batter.Task {
 			return &SuperstepTask{
-				Superstep: uint64(superstep),
-				Aggrs:     lastCollected.Aggrs,
+				Checkpoint: m.checkpointFn(uint64(superstep)),
+				Superstep:  uint64(superstep),
+				Aggrs:      lastCollected.Aggrs,
 			}
 		})
 		m.FinishTaskGroup(grp)

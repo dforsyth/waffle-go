@@ -1,6 +1,7 @@
 package waffle
 
 import (
+	"compress/gzip"
 	"encoding/gob"
 	"log"
 	"os"
@@ -50,7 +51,8 @@ func (p *GobPersister) PersistPartition(partitionId, superstep uint64, vertices 
 		return err
 	}
 	defer f.Close()
-	enc := gob.NewEncoder(f)
+	cmp, _ := gzip.NewWriter(f)
+	enc := gob.NewEncoder(cmp)
 	if err := enc.Encode(newCheckpointData(partitionId, superstep, vertices, inbound)); err != nil {
 		return err
 	}
@@ -65,7 +67,8 @@ func (p *GobPersister) LoadPartition(partitionId, superstep uint64) ([]Vertex, [
 		return nil, nil, err
 	}
 	defer f.Close()
-	dec := gob.NewDecoder(f)
+	cmp, _ := gzip.NewReader(f)
+	dec := gob.NewDecoder(cmp)
 	data := &checkpointData{}
 	if err := dec.Decode(data); err != nil {
 		return nil, nil, err

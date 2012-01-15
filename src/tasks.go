@@ -137,7 +137,9 @@ type SuperstepTaskResponse struct {
 
 func (t *SuperstepTask) Execute() (batter.TaskResponse, error) {
 	if t.Checkpoint {
-		// persist
+		if err := t.w.persistPartitions(t.Superstep); err != nil {
+			return &SuperstepTaskResponse{Errors: []error{err}}, nil
+		}
 	}
 
 	for _, aggr := range t.w.aggregators {

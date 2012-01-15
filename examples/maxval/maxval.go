@@ -248,7 +248,7 @@ func main() {
 		m.SetPersister(persister)
 		m.SetLoader(loader)
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
-			return false
+			return true
 		})
 		m.AddAggregator(&TimingAggregator{})
 		m.Config.LoadPaths = []string{loadDir}
