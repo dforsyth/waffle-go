@@ -3,6 +3,7 @@ package waffle
 import (
 	"batter"
 	"log"
+	"strconv"
 )
 
 type MasterConfig struct {
@@ -53,10 +54,14 @@ type Master struct {
 	loader    Loader
 
 	client batter.MasterWorkerClient
+	server batter.MasterServer
 }
 
-func NewMaster(addr, port string) *Master {
-	m := &Master{}
+func NewMaster(addr, port string, server batter.MasterServer, client batter.MasterWorkerClient) *Master {
+	m := &Master{
+		client: client,
+		server: server,
+	}
 
 	m.initNode(addr, port)
 	m.checkpointFn = func(superstep uint64) bool {
@@ -158,6 +163,17 @@ func (m *Master) PartitionAndLoad() error {
 			return NewFailedTasksError(failed)
 		}
 	*/
+
+	grp = m.CreateTaskGroup("distribute")
+	workers = m.Workers()
+	sendTaskToWorkers(workers, grp, func() batter.Task {
+		return &DistributeTask{}
+	})
+	m.FinishTaskGroup(grp)
+	for resp := range grp.Response {
+		log.Printf("%s done distributing", resp.WorkerId())
+	}
+
 	return nil
 }
 
@@ -175,10 +191,21 @@ func collectStepData(collected *stepInfo, data *stepInfo) *stepInfo {
 }
 
 func (m *Master) Compute() error {
-	var lastCollected *stepInfo
+	lastCollected := newStepInfo()
 	workers := m.Workers()
 	for superstep := 0; ; superstep++ {
-		grp := m.CreateTaskGroup("superstep/" + string(superstep))
+		grp := m.CreateTaskGroup("prepare/" + strconv.Itoa(superstep))
+		sendTaskToWorkers(workers, grp, func() batter.Task {
+			return &PrepareTask{
+				Superstep: uint64(superstep),
+			}
+		})
+		m.FinishTaskGroup(grp)
+		for resp := range grp.Response {
+			log.Printf("%s done preparing", resp.WorkerId())
+		}
+
+		grp = m.CreateTaskGroup("superstep/" + strconv.Itoa(superstep))
 		sendTaskToWorkers(workers, grp, func() batter.Task {
 			return &SuperstepTask{
 				Superstep: uint64(superstep),
@@ -256,7 +283,7 @@ func sendTaskToWorkers(workers []string, grp *batter.TaskGroup, taskGen func() b
 }
 
 func (m *Master) Start() {
-	m.Init(m.Config.Host, m.Config.Port, m.client)
+	m.Init(m.host, m.port, m.server, m.client)
 	m.Run()
 	m.WaitForWorkers(m.Config.MinWorkers)
 	m.CloseRegistration()

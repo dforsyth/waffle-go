@@ -1,6 +1,8 @@
 package waffle
 
-import ()
+import (
+	"encoding/gob"
+)
 
 type node struct {
 	host         string
@@ -19,6 +21,21 @@ func (n *node) Port() string {
 }
 
 func (n *node) initNode(host, port string) {
+	gob.Register(&LoadTask{})
+	gob.Register(&LoadTaskResponse{})
+	gob.Register(&DistributeTask{})
+	gob.Register(&DistributeTaskResponse{})
+	gob.Register(&PrepareTask{})
+	gob.Register(&PrepareTaskResponse{})
+	gob.Register(&SuperstepTask{})
+	gob.Register(&SuperstepTaskResponse{})
+	gob.Register(&WriteTask{})
+	gob.Register(&WriteTaskResponse{})
+	gob.Register(&VertexMsg{})
+	gob.Register(&VertexBase{})
+	gob.Register(&EdgeBase{})
+	gob.Register(&MsgBase{})
+
 	n.host = host
 	n.port = port
 	n.partFn = func(id string, n uint64) uint64 {

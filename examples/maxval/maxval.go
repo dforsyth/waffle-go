@@ -206,6 +206,9 @@ func (a *TimingAggregator) Submit(v interface{}) {
 }
 
 func (a *TimingAggregator) ReduceAndEmit() interface{} {
+	if len(a.values) == 0 {
+		return 0
+	}
 	var sum int = 0
 	for _, dur := range a.values {
 		sum += dur
@@ -215,7 +218,7 @@ func (a *TimingAggregator) ReduceAndEmit() interface{} {
 
 var master bool
 var host, port, maddr, loadDir, persistDir string
-var minWorkers uint64
+var minWorkers int
 
 func main() {
 
@@ -223,7 +226,7 @@ func main() {
 	flag.StringVar(&maddr, "maddr", "127.0.0.1:50000", "master address")
 	flag.StringVar(&port, "port", "50000", "node port")
 	flag.StringVar(&host, "host", "127.0.0.1", "node address")
-	flag.Uint64Var(&minWorkers, "minWorkers", 2, "min workers")
+	flag.IntVar(&minWorkers, "minWorkers", 2, "min workers")
 	flag.StringVar(&loadDir, "loadDir", "testdata", "data load path")
 	flag.StringVar(&persistDir, "persistDir", "persist", "data persist path")
 
@@ -236,14 +239,12 @@ func main() {
 	loader := &MaxValueLoader{basePath: loadDir}
 
 	if master {
-		m := waffle.NewMaster(host, port)
+		m := waffle.NewMaster(host, port, new(batter.GobRPCMasterServer), new(batter.GobRPCMasterWorkerClient))
 
 		m.Config.JobId = "maxval-" + time.Now().UTC().String()
 		m.Config.MinWorkers = minWorkers
 		m.Config.HeartbeatInterval = 10 * 1e9
 
-		m.SetRpcClient(waffle.NewGobMasterRPCClient())
-		m.SetRpcServer(waffle.NewGobMasterRPCServer())
 		m.SetPersister(persister)
 		m.SetLoader(loader)
 		m.SetCheckpointFn(func(checkpoint uint64) bool {
@@ -253,19 +254,17 @@ func main() {
 		m.Config.LoadPaths = []string{loadDir}
 		m.Start()
 	} else {
-		w := waffle.NewWorker(host, port)
+		w := waffle.NewWorker(host, port, new(batter.GobRPCWorkerServer), new(batter.GobRPCWorkerMasterClient), new(batter.GobRPCWorkerWorkerClient))
 		w.Config.MessageThreshold = 1000
 		w.Config.VertexThreshold = 100
 
 		w.Config.MasterHost, w.Config.MasterPort, _ = net.SplitHostPort(maddr)
 
-		w.SetRpcClient(waffle.NewGobWorkerRPCClient())
-		w.SetRpcServer(waffle.NewGobWorkerRPCServer())
 		w.SetLoader(loader)
 		w.SetPersister(persister)
 		w.SetResultWriter(&MaxValueResultWriter{})
 		w.AddCombiner(combine)
 		w.AddAggregator(&TimingAggregator{})
-		w.Run()
+		w.Start()
 	}
 }

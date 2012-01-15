@@ -1,5 +1,7 @@
 package waffle
 
+import ()
+
 type Partition struct {
 	id         uint64
 	verts      map[string]Vertex
@@ -43,12 +45,14 @@ func (p *Partition) compute(superstep uint64, aggregates map[string]interface{},
 			v.SetActive(true)
 		}
 		if v.IsActive() {
-			v.Compute(p.worker.msgs[v.VertexId()])
+			v.Compute(msgs)
 		}
 		if v.IsActive() {
 			collected.Active++
 		}
+		delete(p.worker.msgs, v.VertexId())
 	}
+	collectCh <- collected
 	return nil
 }
 

@@ -68,6 +68,8 @@ type Worker struct {
 	moutq       *batter.OutQ
 	msgs, nmsgs map[string][]Msg
 
+	combiners []func([]batter.Msg) []batter.Msg
+
 	vinq    *batter.InQ
 	voutq   *batter.OutQ
 	vertBuf map[string][]Vertex
@@ -81,13 +83,19 @@ type Worker struct {
 
 	mClient batter.WorkerMasterClient
 	wClient batter.WorkerWorkerClient
+	server  batter.WorkerServer
 
 	done chan int
 }
 
-func NewWorker(addr, port string) *Worker {
+func NewWorker(addr, port string, server batter.WorkerServer, mClient batter.WorkerMasterClient,
+	wClient batter.WorkerWorkerClient) *Worker {
 	w := &Worker{
 		partitions: make(map[uint64]*Partition),
+		server:     server,
+		mClient:    mClient,
+		wClient:    wClient,
+		vertBuf:    make(map[string][]Vertex),
 	}
 
 	w.initNode(addr, port)
@@ -148,6 +156,16 @@ func (w *Worker) FlushVertices() {
 	}
 }
 
+func (w *Worker) RecieveMsgs(inq *batter.InQ) {
+	for msg := range inq.Spout {
+		if msg, ok := msg.(Msg); ok {
+			// append each message :(
+			// TODO: bundle messages
+			w.nmsgs[msg.VertexId()] = append(w.nmsgs[msg.VertexId()], msg)
+		}
+	}
+}
+
 /*
 // Prepase for the next superstep (message queue swaps and resets)
 func stepPrepare(w *Worker, e PhaseExec) PhaseSummary {
@@ -192,8 +210,12 @@ func (w *Worker) persistPartitions() (err error) {
 
 */
 
+func (w *Worker) AddCombiner(fn func([]batter.Msg) []batter.Msg) {
+	w.combiners = append(w.combiners, fn)
+}
+
 func (w *Worker) Start() {
-	w.Init(w.Config.Host, w.Config.Port, w.mClient, w.wClient)
+	w.Init(w.host, w.port, w.server, w.mClient, w.wClient)
 
 	w.voutq, _ = w.CreateMsgOutQueue("v", w.Config.VertexThreshold)
 	w.vinq, _ = w.CreateMsgInQueue("v")
@@ -201,11 +223,19 @@ func (w *Worker) Start() {
 	w.moutq, _ = w.CreateMsgOutQueue("m", w.Config.MessageThreshold)
 	w.minq, _ = w.CreateMsgInQueue("m")
 
+	for _, comb := range w.combiners {
+		w.moutq.AddCombiner(comb)
+	}
+
 	w.OnTaskReceive(func(t batter.Task) {
 		if t, ok := t.(WaffleTask); ok {
 			t.SetWorker(w)
 		}
 	})
+
+	w.vinq.Ready()
+
+	w.msgs, w.nmsgs = make(map[string][]Msg), make(map[string][]Msg)
 
 	w.Run(w.Config.MasterHost, w.Config.MasterPort)
 
