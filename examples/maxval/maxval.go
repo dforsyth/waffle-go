@@ -256,7 +256,7 @@ func main() {
 	} else {
 		w := waffle.NewWorker(host, port, new(batter.GobRPCWorkerServer), new(batter.GobRPCWorkerMasterClient), new(batter.GobRPCWorkerWorkerClient))
 		w.Config.MessageThreshold = 1000
-		w.Config.VertexThreshold = 100
+		w.Config.VertexThreshold = 10
 
 		w.Config.MasterHost, w.Config.MasterPort, _ = net.SplitHostPort(maddr)
 
