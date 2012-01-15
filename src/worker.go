@@ -167,21 +167,6 @@ func (w *Worker) RecieveMsgs(inq *batter.InQ) {
 	}
 }
 
-/*
-// Prepase for the next superstep (message queue swaps and resets)
-func stepPrepare(w *Worker, e PhaseExec) PhaseSummary {
-	// pe := e.(*StepPrepareExec)
-	ps := &StepPrepareSummary{}
-	ps.WId = w.WorkerId()
-
-	w.msgs, w.inq = w.inq, w.msgs
-	w.inq.clear()
-	w.outq.reset()
-	w.lastStepInfo, w.stepInfo = w.stepInfo, w.lastStepInfo
-	return ps
-}
-*/
-
 func (w *Worker) persistPartitions(superstep uint64) (err error) {
 	if w.persister == nil {
 		log.Printf("worker %s has no persister", w.WorkerId())
@@ -238,25 +223,4 @@ func (w *Worker) Start() {
 	w.Run(w.Config.MasterHost, w.Config.MasterPort)
 
 	<-make(chan byte)
-
-	/*
-		w.done = make(chan int)
-		for i := 0; uint64(i) < w.Config.RegisterRetry+1; i++ {
-			// TODO: There should be a better check here.  Use an error for an unsuccessful registration, 
-			// but err == nil && jobId == "" should be an error.
-			if err := w.register(); err != nil {
-				panic(err)
-			}
-			if w.jobId != "" {
-				break
-			}
-			log.Printf("Job registration unsuccessful.  Trying again.")
-		}
-		if w.jobId == "" {
-			log.Println("Failed to register for job, shutting down.")
-			w.done <- 1
-		}
-		<-w.done
-		w.shutdown()
-	*/
 }
