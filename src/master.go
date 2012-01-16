@@ -205,10 +205,18 @@ func (m *Master) Compute() error {
 			log.Printf("%s done preparing", resp.WorkerId())
 		}
 
+		checkpoint := m.checkpointFn(uint64(superstep))
+		if checkpoint {
+			if m.persister != nil {
+				if err := m.persister.PersistMaster(uint64(superstep), m.partitionMap); err != nil {
+					return err
+				}
+			}
+		}
 		grp = m.CreateTaskGroup("superstep/" + strconv.Itoa(superstep))
 		sendTaskToWorkers(workers, grp, func() batter.Task {
 			return &SuperstepTask{
-				Checkpoint: m.checkpointFn(uint64(superstep)),
+				Checkpoint: checkpoint,
 				Superstep:  uint64(superstep),
 				Aggrs:      lastCollected.Aggrs,
 			}
