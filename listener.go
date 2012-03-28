@@ -3,6 +3,7 @@ package waffle
 import (
 	"donut"
 	"gozk"
+	"log"
 )
 
 type waffleListener struct {
@@ -18,10 +19,11 @@ type waffleListener struct {
 }
 
 func (l *waffleListener) OnJoin(zk *gozk.ZooKeeper) {
+	log.Println("waffle onjoin")
 	l.zk = zk
-
-	l.graph = &Graph{}
-
+	l.graph = newGraph(l.job, l.coordinator)
+	l.coordinator.graph = l.graph
+	l.coordinator.donutConfig = l.config
 	l.coordinator.start(zk)
 }
 

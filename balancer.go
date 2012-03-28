@@ -21,5 +21,5 @@ func (b *waffleBalancer) CanClaim() bool {
 }
 
 func (b *waffleBalancer) HandoffList() []string {
-	return nil
+	return make([]string, 0)
 }

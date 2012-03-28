@@ -1,6 +1,8 @@
 package waffle
 
-import ()
+import (
+	"log"
+)
 
 type stepStat struct {
 	step         int
@@ -47,6 +49,18 @@ type Graph struct {
 	// information about the last step
 	stat       *stepStat
 	globalStat *stepStat
+}
+
+func newGraph(j Job, c *coordinator) *Graph {
+	return &Graph{
+		v:          make(map[string]Vertex),
+		e:          make(map[string][]Edge),
+		m:          make(map[string][]Message),
+		job:        j,
+		coord:      c,
+		stat:       &stepStat{},
+		globalStat: &stepStat{},
+	}
 }
 
 func (g *Graph) setStepStats(active, msgs int, aggr map[string]interface{}) {
@@ -109,12 +123,14 @@ func (g *Graph) Load(path string) {
 		panic(err)
 	}
 
+	log.Printf("adding verts from %s", path)
 	for _, v := range verticies {
 		g.addVertex(v)
 	}
 	for _, e := range edges {
 		g.addEdge(e)
 	}
+	log.Printf("done adding verts from %s", path)
 }
 
 func (g *Graph) sendVertex(v Vertex, p int) error {
@@ -124,9 +140,18 @@ func (g *Graph) sendVertex(v Vertex, p int) error {
 
 func (g *Graph) addVertex(v Vertex) {
 	if p := g.determinePartition(v.Id()); p != g.partitionId {
+		log.Printf("sending")
 		g.sendVertex(v, p)
 	}
 	g.v[v.Id()] = v
+}
+
+func (g *Graph) Verticies() map[string]Vertex {
+	return g.v
+}
+
+func (g *Graph) Edges(id string) []Edge {
+	return g.e[id]
 }
 
 func (g *Graph) sendEdge(e Edge, p int) error {
@@ -184,12 +209,16 @@ func (g *Graph) runSuperstep(step int) (int, int, map[string]interface{}) {
 	g.stat.msgs = 0
 	g.stat.aggr = make(map[string]interface{})
 
+	log.Printf("ready to compute for step %d", step)
 	g.compute()
+	log.Printf("done with computation for step %d", step)
 
 	return g.stat.active, g.stat.msgs, g.stat.aggr
 }
 
 func (g *Graph) compute() {
+	log.Printf("computing for %d verts", len(g.v))
+	i := 0
 	for _, v := range g.v {
 		if msgs, ok := g.m[v.Id()]; ok || v.Active() {
 			if msgs == nil {
@@ -200,9 +229,14 @@ func (g *Graph) compute() {
 		if v.Active() {
 			g.stat.active++
 		}
+		i++
+		if i%100 == 0 {
+			log.Printf("have computed %d verts", i)
+		}
 	}
 }
 
 func (g *Graph) Write() error {
+	g.job.Write(g)
 	return nil
 }

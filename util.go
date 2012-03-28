@@ -19,7 +19,8 @@ func watchZKChildren(zk *gozk.ZooKeeper, path string, children *donut.SafeMap, o
 		m[node] = nil
 	}
 	children.RangeUnlock()
-	kill := make(chan byte)
+	kill := make(chan byte, 1)
+	log.Printf("watching "+path+" len is %d", children.Len())
 	go func() {
 		defer close(kill)
 		var nodes []string
@@ -28,6 +29,7 @@ func watchZKChildren(zk *gozk.ZooKeeper, path string, children *donut.SafeMap, o
 			select {
 			case <-kill:
 				// close(watch)
+				log.Printf("got kill")
 				return
 			case event := <-watch:
 				if !event.Ok() {

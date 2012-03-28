@@ -24,15 +24,21 @@ func Run(c *Config, j Job) {
 	listener := &waffleListener{
 		clusterName: clusterName,
 		coordinator: &coordinator{
-			config: c,
+			clusterName: clusterName,
+			config:      c,
 		},
+		job: j,
 	}
 	balancer := &waffleBalancer{}
 	config := donut.NewConfig()
+	config.Servers = "localhost:50000"
+	config.NodeId = c.NodeId
+	config.Timeout = 1 * 1e9
 
 	cluster := donut.NewCluster(clusterName, config, balancer, listener)
 
 	listener.done = make(chan byte)
+	listener.config = config
 	cluster.Join()
 	<-listener.done
 }
