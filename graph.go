@@ -146,8 +146,9 @@ func (g *Graph) determinePartition(id string) int {
 }
 
 // this can only happen during compute()
-func (g *Graph) SendMessageTo(dest string, msg Message) {
+func (g *Graph) SendMessage(msg Message) {
 	// TODO: send stuff
+	g.addMessage(msg)
 	g.stat.msgs++
 }
 

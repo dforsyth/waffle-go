@@ -138,7 +138,7 @@ func (v *MVVertex) Compute(g *waffle.Graph, msgs []waffle.Message) {
 	if max > v.Max {
 		v.Max = max
 		for _, e := range g.Edges(v.Id()) {
-			g.SendMessageTo(e.Destination(), &MVMessage{Value: v.Max})
+			g.SendMessage(&MVMessage{Value: v.Max, Dest: e.Destination()})
 		}
 	}
 	v.Vactive = false
@@ -162,10 +162,11 @@ func (e *MVEdge) Destination() string {
 
 type MVMessage struct {
 	Value int
+	Dest  string
 }
 
 func (m *MVMessage) Destination() string {
-	return ""
+	return m.Dest
 }
 
 func main() {
