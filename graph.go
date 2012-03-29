@@ -40,7 +40,7 @@ type Graph struct {
 	partitionId int
 
 	// need to point back to the coordinator so we can send things
-	coord *coordinator
+	coord *Coordinator
 
 	v map[string]Vertex
 	e map[string][]Edge
@@ -51,7 +51,7 @@ type Graph struct {
 	globalStat *stepStat
 }
 
-func newGraph(j Job, c *coordinator) *Graph {
+func newGraph(j Job, c *Coordinator) *Graph {
 	return &Graph{
 		v:          make(map[string]Vertex),
 		e:          make(map[string][]Edge),
@@ -69,54 +69,6 @@ func (g *Graph) setStepStats(active, msgs int, aggr map[string]interface{}) {
 	g.globalStat.aggr = aggr
 }
 
-/*
-func (g *Graph) createServers() {
-	ctx, _ := gozmq.NewContext()
-
-	var sock *gozmq.Socket
-	sock, _ = ctx.NewSocket(gozmq.REP)
-	sock.Bind("tcp://localhost:" + strconv.Itoa(vPort))
-	g.kills["vert"] = startServer(sock, func(msg []byte) {
-		var v Vertex
-		json.Unmarshal(msg, &v)
-	})
-	port++
-	sock, _ = ctx.NewSocket(gozmq.REP)
-	sock.Bind("tcp://localhost:" + strconv.Itoa(ePort))
-	g.kills["edge"] = startServer(sock, func(msg []byte) {
-		var e Edge
-		json.Unmarshal(msg, &e)
-	})
-	port++
-	sock, _ = ctx.NewSocket(gozmq.REP)
-	sock.Bind("tcp://localhost:" + strconv.Itoa(mPort))
-	g.kills["msg"] = startServer(sock, func(msg []byte) {
-		var m Message
-		json.Unmarshal(msg, &m)
-	})
-}
-
-func (g *Graph) startServer(sock *gozmq.Socket, onRecv func([]byte)) chan byte {
-	kill := make(chan byte)
-	go func() {
-		select {
-		case <-kill:
-			return
-		default:
-		}
-
-		msg, err := gozmq.Recv(0)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		onRecv(msg)
-	}()
-	return kill
-}
-*/
-
 func (g *Graph) Load(path string) {
 	verticies, edges, err := g.job.Load(path)
 	if err != nil {
@@ -127,21 +79,23 @@ func (g *Graph) Load(path string) {
 	for _, v := range verticies {
 		g.addVertex(v)
 	}
+	log.Printf("adding edges from %s", path)
 	for _, e := range edges {
 		g.addEdge(e)
 	}
-	log.Printf("done adding verts from %s", path)
+	log.Printf("done adding verts and edges from %s", path)
 }
 
 func (g *Graph) sendVertex(v Vertex, p int) error {
-	g.coord.sendVertex(v, p)
-	return nil
+	return g.coord.sendVertex(v, p)
 }
 
 func (g *Graph) addVertex(v Vertex) {
 	if p := g.determinePartition(v.Id()); p != g.partitionId {
-		log.Printf("sending")
-		g.sendVertex(v, p)
+		if e := g.sendVertex(v, p); e != nil {
+			panic(e)
+		}
+		return
 	}
 	g.v[v.Id()] = v
 }
@@ -155,32 +109,40 @@ func (g *Graph) Edges(id string) []Edge {
 }
 
 func (g *Graph) sendEdge(e Edge, p int) error {
-	g.coord.sendEdge(e, p)
-	return nil
+	return g.coord.sendEdge(e, p)
 }
 
 func (g *Graph) addEdge(e Edge) {
 	if p := g.determinePartition(e.Source()); p != g.partitionId {
-		g.sendEdge(e, p)
+		if e := g.sendEdge(e, p); e != nil {
+			panic(e)
+		}
+		return
 	}
 	g.e[e.Source()] = append(g.e[e.Source()], e)
 }
 
 func (g *Graph) sendMessage(m Message, p int) error {
-	g.coord.sendMessage(m, p)
-	return nil
+	return g.coord.sendMessage(m, p)
 }
 
 func (g *Graph) addMessage(m Message) {
 	if p := g.determinePartition(m.Destination()); p != g.partitionId {
-		g.sendMessage(m, p)
+		if e := g.sendMessage(m, p); e != nil {
+			panic(e)
+		}
+		return
 	}
 	g.m[m.Destination()] = append(g.m[m.Destination()], m)
 }
 
 // TODO: implement
 func (g *Graph) determinePartition(id string) int {
-	return 0
+	sum := 0
+	for _, c := range id {
+		sum += int(c)
+	}
+	return sum % g.coord.workers.Len()
 }
 
 // this can only happen during compute()

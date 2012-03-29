@@ -2,7 +2,8 @@ package waffle
 
 import (
 	"donut"
-	"time"
+	// "time"
+	// "strconv"
 )
 
 const (
@@ -20,10 +21,10 @@ type Writer interface {
 }
 
 func Run(c *Config, j Job) {
-	clusterName := j.Id() + "-" + time.Now().String()
+	clusterName := j.Id() // + "-" + strconv.Itoa(int(time.Now().Unix())) // XXX why do numbers break everything?
 	listener := &waffleListener{
 		clusterName: clusterName,
-		coordinator: &coordinator{
+		coordinator: &Coordinator{
 			clusterName: clusterName,
 			config:      c,
 		},
@@ -39,6 +40,7 @@ func Run(c *Config, j Job) {
 
 	listener.done = make(chan byte)
 	listener.config = config
+	listener.coordinator.done = listener.done
 	cluster.Join()
 	<-listener.done
 }

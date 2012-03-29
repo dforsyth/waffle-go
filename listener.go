@@ -7,7 +7,7 @@ import (
 )
 
 type waffleListener struct {
-	coordinator *coordinator
+	coordinator *Coordinator
 
 	clusterName string
 
