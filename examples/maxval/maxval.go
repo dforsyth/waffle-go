@@ -1,173 +1,133 @@
 package main
 
 import (
-	"batter"
 	"bufio"
 	"encoding/gob"
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"os"
 	"path"
 	"strconv"
 	"strings"
-	"time"
 	"waffle"
 )
 
-type MaxValueVertex struct {
-	waffle.VertexBase
-	Value int
-	Max   int
+type MVJob struct {
 }
 
-type MaxValueMsg struct {
-	waffle.MsgBase
-	Value int
+func (j *MVJob) Id() string {
+	return "MVJob"
 }
 
-// Load vertices from generated data file
-type MaxValueLoader struct {
-	basePath string
-}
-
-func filesToLoad(dir string) ([]string, error) {
-	files, err := ioutil.ReadDir(dir)
+func (j *MVJob) LoadPaths() (paths []string) {
+	files, err := ioutil.ReadDir("../examples/maxval/testdata")
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-
-	var paths []string
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), ".data") {
-			continue
+		if strings.HasSuffix(file.Name(), ".data") {
+			paths = append(paths, file.Name())
 		}
-		paths = append(paths, file.Name())
 	}
-	log.Println("files to load:")
-	for _, path := range paths {
-		log.Printf("->%s", path)
-	}
-	return paths, nil
+	/*
+		log.Println("Files to load:")
+		for _, name := range paths {
+			log.Printf("\t->%s", name)
+		}
+	*/
+	return
 }
 
-func (l *MaxValueLoader) AssignLoad(workers []string, loadPaths []string) map[string][]string {
-	var files []string
-	for _, path := range loadPaths {
-		paths, err := filesToLoad(path)
-		if err != nil {
-			panic(err)
-		}
-		files = append(files, paths...)
-	}
-
-	assign := make(map[string][]string)
-	// XXX ghetto for testing
-	for _, hostPort := range workers {
-		assign[hostPort] = files
-		for _, path := range assign[hostPort] {
-			log.Printf("assigned loading: %s -> %s", path, hostPort)
-		}
-		break
-	}
-
-	return assign
-}
-
-func vertexBuilder(id, val string) *MaxValueVertex {
-	v := &MaxValueVertex{}
-	v.SetVertexId(strings.TrimSpace(id))
-	if val, err := strconv.Atoi(strings.TrimSpace(val)); err != nil {
-		return nil
-	} else {
-		v.Value = val
-	}
+func vertexBuilder(id, val string) *MVVertex {
+	v := &MVVertex{}
+	v.Vid = strings.TrimSpace(id)
+	v.Value, _ = strconv.Atoi(strings.TrimSpace(val))
 	return v
 }
 
-func (l *MaxValueLoader) Load(w *waffle.Worker, filePath string) (loaded uint64, err error) {
+func (j *MVJob) Load(p string) ([]waffle.Vertex, []waffle.Edge, error) {
+	log.Printf("loading %s", p)
+	// do the load
 	var file *os.File
-	if file, err = os.Open(path.Join(l.basePath, filePath)); err != nil {
-		return 0, err
+	var err error
+	if file, err = os.Open(path.Join("../examples/maxval/testdata", p)); err != nil {
+		return nil, nil, err
 	}
 	reader := bufio.NewReader(file)
 
 	var line string
+	var verts []waffle.Vertex
+	var edges []waffle.Edge
+	log.Printf("%s: going into load loop", p)
 	for {
 		if line, err = reader.ReadString('\n'); err != nil {
-			break
+			if err != io.EOF {
+				return nil, nil, err
+			} else {
+				break
+			}
 		}
-		if line[0] == '#' {
+		if len(line) <= 0 || line[0] == '#' {
 			// comment line
+			log.Printf("(%s) skipping line: \"%s\"", p, line)
 			continue
 		}
 		split := strings.Split(line, "\t")
 		v := vertexBuilder(split[0], split[1])
 		if v == nil {
-			return loaded, errors.New("bad vertex load")
+			return nil, nil, errors.New("bad vertex load")
 		}
 		for _, val := range split[2:] {
-			e := &waffle.EdgeBase{}
-			e.SetTarget(strings.TrimSpace(val))
-			v.AddOutEdge(e)
-		}
-		v.SetActive(true)
-		w.AddVertex(v)
-		loaded++
-	}
-	if err == io.EOF {
-		err = nil
-	}
-	return
-}
-
-// Writes max value to stdout
-type MaxValueResultWriter struct {
-}
-
-func (rw *MaxValueResultWriter) WriteResults(w *waffle.Worker) error {
-	max := 0
-	for _, p := range w.Partitions() {
-		for _, v := range p.Vertices() {
-			mvv := v.(*MaxValueVertex)
-			if mvv.Max > max {
-				max = mvv.Max
+			e := &MVEdge{
+				Esrc: v.Id(),
+				Edst: strings.TrimSpace(val),
 			}
+			edges = append(edges, e)
 		}
+		v.Vactive = true
+		verts = append(verts, v)
 	}
-	fmt.Printf("Max value: %d\n", max)
+	log.Printf("(%s) loaded %d verts, %d edges", p, len(verts), len(edges))
+	return verts, edges, nil
+}
+
+func (j *MVJob) Checkpoint(step int) bool {
+	return true
+}
+
+func (j *MVJob) Persist() error {
 	return nil
 }
 
-// Combine to a single max value message
-func combine(msgs []batter.Msg) []batter.Msg {
-	if len(msgs) == 0 {
-		return msgs
-	}
-	maxMsg := msgs[0].(*MaxValueMsg)
-	for _, msg := range msgs {
-		if msg.(*MaxValueMsg).Value > maxMsg.Value {
-			maxMsg = msg.(*MaxValueMsg)
+func (j *MVJob) Write(g *waffle.Graph) error {
+	m := -1
+	for _, v := range g.Verticies() {
+		v := v.(*MVVertex)
+		if v.Max > m {
+			m = v.Max
 		}
 	}
-	return []batter.Msg{maxMsg}
+	log.Printf("max is %d", m)
+	return nil
 }
 
-// Do work
-func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
-	start := time.Now()
-	if val := v.AggregateValue("timing"); v.Superstep() > 0 && val != nil {
-		if dur, ok := val.(int64); ok && dur > 5*1e8 {
-			log.Printf("timing: %d nanoseconds", val)
-		}
-	}
+type MVVertex struct {
+	Vid     string
+	Vactive bool
+	Value   int
+	Max     int
+}
+
+func (v *MVVertex) Id() string {
+	return v.Vid
+}
+
+func (v *MVVertex) Compute(g *waffle.Graph, msgs []waffle.Message) {
 	max := 0
 	for _, msg := range msgs {
-		val := msg.(*MaxValueMsg).Value
+		val := msg.(*MVMessage).Value
 		if val > max {
 			max = val
 		}
@@ -177,94 +137,44 @@ func (v *MaxValueVertex) Compute(msgs []waffle.Msg) {
 	}
 	if max > v.Max {
 		v.Max = max
-		for _, e := range v.OutEdges() {
-			v.SendMessageTo(e.Target(), &MaxValueMsg{Value: v.Max})
+		for _, e := range g.Edges(v.Id()) {
+			g.SendMessageTo(e.Destination(), &MVMessage{Value: v.Max})
 		}
 	}
-	v.VoteToHalt()
-	v.SubmitToAggregator("timing", int(time.Now().Sub(start)))
+	v.Vactive = false
 }
 
-type TimingAggregator struct {
-	values []int
+func (v *MVVertex) Active() bool {
+	return v.Vactive
 }
 
-func (a *TimingAggregator) Name() string {
-	return "timing"
+type MVEdge struct {
+	Esrc, Edst string
 }
 
-func (a *TimingAggregator) Reset() {
-	a.values = a.values[0:0]
+func (e *MVEdge) Source() string {
+	return e.Esrc
 }
 
-func (a *TimingAggregator) Submit(v interface{}) {
-	if dur, ok := v.(int); ok {
-		a.values = append(a.values, dur)
-	} else {
-		panic("non int value submitted to TimingAggregator")
-	}
+func (e *MVEdge) Destination() string {
+	return e.Edst
 }
 
-func (a *TimingAggregator) ReduceAndEmit() interface{} {
-	if len(a.values) == 0 {
-		return 0
-	}
-	var sum int = 0
-	for _, dur := range a.values {
-		sum += dur
-	}
-	return sum / len(a.values)
+type MVMessage struct {
+	Value int
 }
 
-var master bool
-var host, port, maddr, loadDir, persistDir string
-var minWorkers int
+func (m *MVMessage) Destination() string {
+	return ""
+}
 
 func main() {
-
-	flag.BoolVar(&master, "master", false, "node is master")
-	flag.StringVar(&maddr, "maddr", "127.0.0.1:50000", "master address")
-	flag.StringVar(&port, "port", "50000", "node port")
-	flag.StringVar(&host, "host", "127.0.0.1", "node address")
-	flag.IntVar(&minWorkers, "minWorkers", 2, "min workers")
-	flag.StringVar(&loadDir, "loadDir", "testdata", "data load path")
-	flag.StringVar(&persistDir, "persistDir", "persist", "data persist path")
-
-	flag.Parse()
-
-	gob.Register(&MaxValueVertex{})
-	gob.Register(&MaxValueMsg{})
-
-	persister := waffle.NewGobPersister(persistDir)
-	loader := &MaxValueLoader{basePath: loadDir}
-
-	if master {
-		m := waffle.NewMaster(host, port, new(batter.GobRPCMasterServer), new(batter.GobRPCMasterWorkerClient))
-
-		m.Config.JobId = "maxval-" + time.Now().UTC().String()
-		m.Config.MinWorkers = minWorkers
-		m.Config.HeartbeatInterval = 10 * 1e9
-
-		m.SetPersister(persister)
-		m.SetLoader(loader)
-		m.SetCheckpointFn(func(checkpoint uint64) bool {
-			return false
-		})
-		m.AddAggregator(&TimingAggregator{})
-		m.Config.LoadPaths = []string{loadDir}
-		m.Start()
-	} else {
-		w := waffle.NewWorker(host, port, new(batter.GobRPCWorkerServer), new(batter.GobRPCWorkerMasterClient), new(batter.GobRPCWorkerWorkerClient))
-		w.Config.MessageThreshold = 1000
-		w.Config.VertexThreshold = 10
-
-		w.Config.MasterHost, w.Config.MasterPort, _ = net.SplitHostPort(maddr)
-
-		w.SetLoader(loader)
-		w.SetPersister(persister)
-		w.SetResultWriter(&MaxValueResultWriter{})
-		w.AddCombiner(combine)
-		w.AddAggregator(&TimingAggregator{})
-		w.Start()
+	gob.Register(&MVVertex{})
+	gob.Register(&MVMessage{})
+	gob.Register(&MVEdge{})
+	config := &waffle.Config{
+		Partitions: 2,
+		NodeId:     os.Args[1],
 	}
+	waffle.Run(config, &MVJob{})
 }
