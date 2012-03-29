@@ -93,7 +93,7 @@ func (g *Graph) sendVertex(v Vertex, p int) error {
 func (g *Graph) addVertex(v Vertex) {
 	if p := g.determinePartition(v.Id()); p != g.partitionId {
 		if e := g.sendVertex(v, p); e != nil {
-			panic(e)
+			log.Panicln(e)
 		}
 		return
 	}
@@ -115,7 +115,7 @@ func (g *Graph) sendEdge(e Edge, p int) error {
 func (g *Graph) addEdge(e Edge) {
 	if p := g.determinePartition(e.Source()); p != g.partitionId {
 		if e := g.sendEdge(e, p); e != nil {
-			panic(e)
+			log.Panicln(e)
 		}
 		return
 	}
@@ -129,7 +129,7 @@ func (g *Graph) sendMessage(m Message, p int) error {
 func (g *Graph) addMessage(m Message) {
 	if p := g.determinePartition(m.Destination()); p != g.partitionId {
 		if e := g.sendMessage(m, p); e != nil {
-			panic(e)
+			log.Panicln(e)
 		}
 		return
 	}
