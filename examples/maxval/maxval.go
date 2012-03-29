@@ -22,7 +22,7 @@ func (j *MVJob) Id() string {
 }
 
 func (j *MVJob) LoadPaths() (paths []string) {
-	files, err := ioutil.ReadDir("../examples/maxval/testdata")
+	files, err := ioutil.ReadDir("./testdata")
 	if err != nil {
 		panic(err)
 	}
@@ -52,7 +52,7 @@ func (j *MVJob) Load(p string) ([]waffle.Vertex, []waffle.Edge, error) {
 	// do the load
 	var file *os.File
 	var err error
-	if file, err = os.Open(path.Join("../examples/maxval/testdata", p)); err != nil {
+	if file, err = os.Open(path.Join("./testdata", p)); err != nil {
 		return nil, nil, err
 	}
 	reader := bufio.NewReader(file)
