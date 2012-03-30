@@ -33,10 +33,7 @@ type Message interface {
 }
 
 type Graph struct {
-	kills map[string]chan byte
-	job   Job
-
-	state       int32
+	job         Job
 	partitionId int
 
 	// need to point back to the coordinator so we can send things
@@ -108,6 +105,10 @@ func (g *Graph) Edges(id string) []Edge {
 	return g.edges[id]
 }
 
+func (g *Graph) Messages(id string) []Message {
+	return g.messages[id]
+}
+
 func (g *Graph) sendEdge(e Edge, p int) error {
 	return g.coordinator.sendEdge(e, p)
 }
@@ -162,7 +163,7 @@ func (g *Graph) runSuperstep(step int) (int, int, map[string]interface{}) {
 	}
 
 	if g.job.Checkpoint(step) {
-		if err := g.job.Persist(); err != nil {
+		if err := g.job.Persist(g); err != nil {
 			panic(err)
 		}
 	}

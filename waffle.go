@@ -2,33 +2,21 @@ package waffle
 
 import (
 	"donut"
-	// "time"
-	// "strconv"
 )
 
-const (
-	vPort = 5000
-	ePort = 6000
-	mPort = 7000
-)
-
-type Persister interface {
-	Persist()
-}
-
-type Writer interface {
-	Write()
+type Config struct {
+	NodeId           string
+	JobId            string
+	InitialWorkers   int
+	RPCHost, RPCPort string
 }
 
 func Run(c *Config, j Job) {
-	clusterName := j.Id() // + "-" + strconv.Itoa(int(time.Now().Unix())) // XXX why do numbers break everything?
+	clusterName := j.Id()
 	listener := &waffleListener{
 		clusterName: clusterName,
-		coordinator: &Coordinator{
-			clusterName: clusterName,
-			config:      c,
-		},
-		job: j,
+		coordinator: newCoordinator(clusterName, c),
+		job:         j,
 	}
 	balancer := &waffleBalancer{}
 	config := donut.NewConfig()
@@ -46,10 +34,10 @@ func Run(c *Config, j Job) {
 }
 
 const (
-	barriers = "barriers"
-	joinable = "joinable"
-	ready    = "ready"
-	lock     = "lock"
-	workers  = "workers"
+	BarriersPath = "barriers"
+	// JoinablePath = "joinable"
+	// ReadyPath    = "ready"
+	LockPath    = "lock"
+	WorkersPath = "workers"
 	// coordinator = "coordinator"
 )

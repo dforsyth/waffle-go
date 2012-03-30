@@ -97,7 +97,7 @@ func (j *MVJob) Checkpoint(step int) bool {
 	return true
 }
 
-func (j *MVJob) Persist() error {
+func (j *MVJob) Persist(g *waffle.Graph) error {
 	return nil
 }
 
@@ -174,8 +174,8 @@ func main() {
 	gob.Register(&MVMessage{})
 	gob.Register(&MVEdge{})
 	config := &waffle.Config{
-		Partitions: 2,
-		NodeId:     os.Args[1],
+		InitialWorkers: 2,
+		NodeId:         os.Args[1],
 	}
 	waffle.Run(config, &MVJob{})
 }

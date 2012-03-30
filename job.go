@@ -6,6 +6,6 @@ type Job interface {
 	Load(string) ([]Vertex, []Edge, error)
 	Checkpoint(int) bool
 	Write(*Graph) error
-	Persist() error
+	Persist(*Graph) error
 	// Compute(g, v, m)
 }

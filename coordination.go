@@ -11,21 +11,17 @@ import (
 	"path"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	SETUP = iota
-	LOAD
-	RUN
-	WRITE
+	NewState = iota
+	SetupState
+	LoadState
+	RunState
+	WriteState
 )
-
-type Config struct {
-	NodeId     string
-	JobId      string
-	Partitions int
-}
 
 type Coordinator struct {
 	// workers
@@ -49,13 +45,28 @@ type Coordinator struct {
 	partitions  map[int]string
 	workerInfos map[string]map[string]interface{}
 
-	clients    map[string]*rpc.Client
+	rpcClients map[string]*rpc.Client
 	host, port string
 
 	done chan byte
 }
 
+func newCoordinator(clusterName string, c *Config) *Coordinator {
+	return &Coordinator{
+		clusterName: clusterName,
+		state:       NewState,
+		config:      c,
+		watchers:    make(map[string]chan byte),
+		partitions:  make(map[int]string),
+		workers:     donut.NewSafeMap(nil),
+		rpcClients:  make(map[string]*rpc.Client),
+	}
+}
+
 func (c *Coordinator) setup() {
+	if !atomic.CompareAndSwapInt32(&c.state, NewState, SetupState) {
+		log.Fatal("Could not swap to setup state to begin setup")
+	}
 	c.basePath = path.Join("/", c.config.JobId)
 	c.lockPath = path.Join(c.basePath, "lock")
 	c.workersPath = path.Join(c.basePath, "workers")
@@ -64,10 +75,6 @@ func (c *Coordinator) setup() {
 	c.zk.Create(c.basePath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
 	c.zk.Create(c.workersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
 	c.zk.Create(c.barriersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
-
-	c.watchers = make(map[string]chan byte)
-	c.partitions = make(map[int]string)
-	c.workers = donut.NewSafeMap(nil)
 
 	// start servers
 	c.startServer()
@@ -98,7 +105,7 @@ func (c *Coordinator) SubmitVertex(v Vertex, r *int) error {
 
 func (c *Coordinator) sendVertex(v Vertex, pid int) error {
 	w := c.partitions[pid]
-	cl := c.clients[w]
+	cl := c.rpcClients[w]
 	var r int
 	// log.Printf("sending %s", v.Id())
 	return cl.Call("Coordinator.SubmitVertex", &v, &r)
@@ -113,7 +120,7 @@ func (c *Coordinator) SubmitEdge(e Edge, r *int) error {
 
 func (c *Coordinator) sendEdge(e Edge, pid int) error {
 	w := c.partitions[pid]
-	cl := c.clients[w]
+	cl := c.rpcClients[w]
 	var r int
 	// log.Printf("sending edge %s-%s", e.Source(), e.Destination())
 	return cl.Call("Coordinator.SubmitEdge", &e, &r)
@@ -127,7 +134,7 @@ func (c *Coordinator) SubmitMessage(m Message, r *int) error {
 
 func (c *Coordinator) sendMessage(m Message, pid int) error {
 	w := c.partitions[pid]
-	cl := c.clients[w]
+	cl := c.rpcClients[w]
 	var r int
 	return cl.Call("Coordinator.SubmitMessage", &m, &r)
 }
@@ -143,7 +150,7 @@ func (c *Coordinator) register() {
 		c.workers.RangeUnlock()
 		if _, err := c.zk.Create(c.lockPath, "", gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
 			defer c.zk.Delete(c.lockPath, -1)
-			if c.workers.Len() < c.config.Partitions {
+			if c.workers.Len() < c.config.InitialWorkers {
 				info := c.info()
 				if _, err := c.zk.Create(path.Join(c.workersPath, c.config.NodeId), info, gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
 					panic(err)
@@ -151,7 +158,7 @@ func (c *Coordinator) register() {
 				return
 			}
 			c.zk.Delete(c.lockPath, -1)
-			panic("partitions already reached " + strconv.Itoa(c.workers.Len()) + "/" + strconv.Itoa(c.config.Partitions))
+			panic("partitions already reached " + strconv.Itoa(c.workers.Len()) + "/" + strconv.Itoa(c.config.InitialWorkers))
 		}
 		time.Sleep(time.Second)
 	}
@@ -249,6 +256,7 @@ func (c *Coordinator) onStepBarrierChange(step int, m *donut.SafeMap) {
 		c.watchers[barrierName] <- 1
 		delete(c.watchers, barrierName)
 		if c.graph.globalStat.active == 0 && c.graph.globalStat.msgs == 0 {
+			atomic.StoreInt32(&c.state, WriteState)
 			go c.createWriteWork()
 		} else {
 			go c.createStepWork(step + 1)
@@ -260,12 +268,12 @@ func (c *Coordinator) onStepBarrierChange(step int, m *donut.SafeMap) {
 
 func (c *Coordinator) onWorkersChange(m *donut.SafeMap) {
 	log.Println("workers updated")
-	if c.state > SETUP {
+	if atomic.LoadInt32(&c.state) > SetupState {
 		// invalidate current step
 		// update partition mapping
 		// roll back to last checkpoint
 	} else {
-		if m.Len() == c.config.Partitions {
+		if m.Len() == c.config.InitialWorkers {
 			log.Printf("len == partitions")
 			// everyone is here, create the partition mapping
 			lm := m.RangeLock()
@@ -284,11 +292,16 @@ func (c *Coordinator) onWorkersChange(m *donut.SafeMap) {
 
 			// set up connections to all the other nodes
 			c.workerInfos = make(map[string]map[string]interface{})
-			c.clients = make(map[string]*rpc.Client)
+			c.rpcClients = make(map[string]*rpc.Client)
 			for _, w := range workers {
 				// pull down worker info for all of the existing workers
 				c.workerInfos[w] = c.workerInfo(w)
-				c.clients[w], _ = rpc.DialHTTP("tcp", net.JoinHostPort(c.workerInfos[w]["host"].(string), c.workerInfos[w]["port"].(string)))
+				c.rpcClients[w], _ = rpc.DialHTTP("tcp", net.JoinHostPort(c.workerInfos[w]["host"].(string), c.workerInfos[w]["port"].(string)))
+			}
+
+			// go into loadstate
+			if !atomic.CompareAndSwapInt32(&c.state, SetupState, LoadState) {
+				panic("state swap from setup to loadstate failed")
 			}
 			go c.createLoadWork()
 		}
@@ -320,6 +333,7 @@ func (c *Coordinator) onLoadBarrierChange(m *donut.SafeMap) {
 		log.Printf("load complete")
 		c.watchers["load"] <- 1
 		delete(c.watchers, "load")
+		atomic.StoreInt32(&c.state, RunState)
 		go c.createStepWork(1)
 	} else {
 		log.Printf("%d != %d", m.Len(), len(c.graph.job.LoadPaths()))
