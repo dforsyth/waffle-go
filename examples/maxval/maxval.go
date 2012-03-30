@@ -103,7 +103,7 @@ func (j *MVJob) Persist() error {
 
 func (j *MVJob) Write(g *waffle.Graph) error {
 	m := -1
-	for _, v := range g.Verticies() {
+	for _, v := range g.Vertices() {
 		v := v.(*MVVertex)
 		if v.Max > m {
 			m = v.Max

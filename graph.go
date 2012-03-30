@@ -40,26 +40,26 @@ type Graph struct {
 	partitionId int
 
 	// need to point back to the coordinator so we can send things
-	coord *Coordinator
+	coordinator *Coordinator
 
-	v map[string]Vertex
-	e map[string][]Edge
-	m map[string][]Message
+	vertices map[string]Vertex
+	edges    map[string][]Edge
+	messages map[string][]Message
 
 	// information about the last step
-	stat       *stepStat
+	localStat  *stepStat
 	globalStat *stepStat
 }
 
 func newGraph(j Job, c *Coordinator) *Graph {
 	return &Graph{
-		v:          make(map[string]Vertex),
-		e:          make(map[string][]Edge),
-		m:          make(map[string][]Message),
-		job:        j,
-		coord:      c,
-		stat:       &stepStat{},
-		globalStat: &stepStat{},
+		vertices:    make(map[string]Vertex),
+		edges:       make(map[string][]Edge),
+		messages:    make(map[string][]Message),
+		job:         j,
+		coordinator: c,
+		localStat:   &stepStat{},
+		globalStat:  &stepStat{},
 	}
 }
 
@@ -70,13 +70,13 @@ func (g *Graph) setStepStats(active, msgs int, aggr map[string]interface{}) {
 }
 
 func (g *Graph) Load(path string) {
-	verticies, edges, err := g.job.Load(path)
+	vertices, edges, err := g.job.Load(path)
 	if err != nil {
 		panic(err)
 	}
 
 	log.Printf("adding verts from %s", path)
-	for _, v := range verticies {
+	for _, v := range vertices {
 		g.addVertex(v)
 	}
 	log.Printf("adding edges from %s", path)
@@ -87,7 +87,7 @@ func (g *Graph) Load(path string) {
 }
 
 func (g *Graph) sendVertex(v Vertex, p int) error {
-	return g.coord.sendVertex(v, p)
+	return g.coordinator.sendVertex(v, p)
 }
 
 func (g *Graph) addVertex(v Vertex) {
@@ -97,19 +97,19 @@ func (g *Graph) addVertex(v Vertex) {
 		}
 		return
 	}
-	g.v[v.Id()] = v
+	g.vertices[v.Id()] = v
 }
 
-func (g *Graph) Verticies() map[string]Vertex {
-	return g.v
+func (g *Graph) Vertices() map[string]Vertex {
+	return g.vertices
 }
 
 func (g *Graph) Edges(id string) []Edge {
-	return g.e[id]
+	return g.edges[id]
 }
 
 func (g *Graph) sendEdge(e Edge, p int) error {
-	return g.coord.sendEdge(e, p)
+	return g.coordinator.sendEdge(e, p)
 }
 
 func (g *Graph) addEdge(e Edge) {
@@ -119,11 +119,11 @@ func (g *Graph) addEdge(e Edge) {
 		}
 		return
 	}
-	g.e[e.Source()] = append(g.e[e.Source()], e)
+	g.edges[e.Source()] = append(g.edges[e.Source()], e)
 }
 
 func (g *Graph) sendMessage(m Message, p int) error {
-	return g.coord.sendMessage(m, p)
+	return g.coordinator.sendMessage(m, p)
 }
 
 func (g *Graph) addMessage(m Message) {
@@ -133,7 +133,7 @@ func (g *Graph) addMessage(m Message) {
 		}
 		return
 	}
-	g.m[m.Destination()] = append(g.m[m.Destination()], m)
+	g.messages[m.Destination()] = append(g.messages[m.Destination()], m)
 }
 
 // TODO: implement
@@ -142,18 +142,18 @@ func (g *Graph) determinePartition(id string) int {
 	for _, c := range id {
 		sum += int(c)
 	}
-	return sum % g.coord.workers.Len()
+	return sum % g.coordinator.workers.Len()
 }
 
 // this can only happen during compute()
 func (g *Graph) SendMessage(msg Message) {
 	// TODO: send stuff
 	g.addMessage(msg)
-	g.stat.msgs++
+	g.localStat.msgs++
 }
 
 func (g *Graph) Superstep() int {
-	return g.stat.step
+	return g.localStat.step
 }
 
 func (g *Graph) runSuperstep(step int) (int, int, map[string]interface{}) {
@@ -167,30 +167,30 @@ func (g *Graph) runSuperstep(step int) (int, int, map[string]interface{}) {
 		}
 	}
 
-	g.stat.step = step
-	g.stat.active = 0
-	g.stat.msgs = 0
-	g.stat.aggr = make(map[string]interface{})
+	g.localStat.step = step
+	g.localStat.active = 0
+	g.localStat.msgs = 0
+	g.localStat.aggr = make(map[string]interface{})
 
 	log.Printf("ready to compute for step %d", step)
 	g.compute()
 	log.Printf("done with computation for step %d", step)
 
-	return g.stat.active, g.stat.msgs, g.stat.aggr
+	return g.localStat.active, g.localStat.msgs, g.localStat.aggr
 }
 
 func (g *Graph) compute() {
-	log.Printf("computing for %d verts", len(g.v))
+	log.Printf("computing for %d verts", len(g.vertices))
 	i := 0
-	for _, v := range g.v {
-		if msgs, ok := g.m[v.Id()]; ok || v.Active() {
+	for _, v := range g.vertices {
+		if msgs, ok := g.messages[v.Id()]; ok || v.Active() {
 			if msgs == nil {
 				msgs = make([]Message, 0)
 			}
 			v.Compute(g, msgs)
 		}
 		if v.Active() {
-			g.stat.active++
+			g.localStat.active++
 		}
 		i++
 		if i%100 == 0 {
