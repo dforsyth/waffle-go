@@ -33,6 +33,7 @@ type Coordinator struct {
 	config *Config
 
 	// graph partition on this node
+	// TODO: make this a map of partition to graph so that we can pick up partitions from failed workers
 	graph *Graph
 
 	zk                                            *gozk.ZooKeeper
@@ -63,7 +64,7 @@ func newCoordinator(clusterName string, c *Config) *Coordinator {
 	}
 }
 
-func (c *Coordinator) setup() {
+func (c *Coordinator) createPaths() {
 	c.basePath = path.Join("/", c.config.JobId)
 	c.lockPath = path.Join(c.basePath, LockPath)
 	c.workersPath = path.Join(c.basePath, WorkersPath)
@@ -72,10 +73,14 @@ func (c *Coordinator) setup() {
 	c.zk.Create(c.basePath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
 	c.zk.Create(c.workersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
 	c.zk.Create(c.barriersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
+}
 
-	// start servers
+func (c *Coordinator) setup() {
+	// create the paths for this job
+	c.createPaths()
+	// start rpc server
 	c.startServer()
-
+	// watch the workers path
 	watchZKChildren(c.zk, c.workersPath, c.workers, func(m *donut.SafeMap) {
 		c.onWorkersChange(m)
 	})
@@ -92,7 +97,6 @@ func (c *Coordinator) startServer() {
 }
 
 func (c *Coordinator) SubmitVertex(v Vertex, r *int) error {
-	// log.Printf("got %s", v.Id())
 	c.graph.addVertex(v)
 	*r = 0
 	return nil
@@ -133,23 +137,16 @@ func (c *Coordinator) sendMessage(m Message, pid int) error {
 
 func (c *Coordinator) register() {
 	for {
-		log.Printf("len: %d", c.workers.Len())
-		m := c.workers.RangeLock()
-		for k := range m {
-			log.Printf("k: %s", k)
-		}
-		c.workers.RangeUnlock()
 		if _, err := c.zk.Create(c.lockPath, "", gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
 			defer c.zk.Delete(c.lockPath, -1)
 			if c.workers.Len() < c.config.InitialWorkers {
 				info := c.info()
 				if _, err := c.zk.Create(path.Join(c.workersPath, c.config.NodeId), info, gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
-					panic(err)
+					log.Fatalln(err)
 				}
 				return
 			}
-			c.zk.Delete(c.lockPath, -1)
-			panic("partitions already reached " + strconv.Itoa(c.workers.Len()) + "/" + strconv.Itoa(c.config.InitialWorkers))
+			log.Fatalln("InitialWorkers has been met for this job, exiting")
 		}
 		time.Sleep(time.Second)
 	}
@@ -165,7 +162,7 @@ func (c *Coordinator) createBarrier(name string, onChange func(*donut.SafeMap)) 
 		}
 		kill, err := watchZKChildren(c.zk, bPath, donut.NewSafeMap(make(map[string]interface{})), onChange)
 		if err != nil {
-			panic(err)
+			log.Fatalln(err)
 		}
 		c.watchers[name] = kill
 	}
@@ -174,8 +171,7 @@ func (c *Coordinator) createBarrier(name string, onChange func(*donut.SafeMap)) 
 func (c *Coordinator) enterBarrier(name, entry, data string) {
 	log.Printf("Entering barrier %s as %s", name, entry)
 	if _, err := c.zk.Create(path.Join(c.barriersPath, name, entry), data, gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
-		log.Printf("Error on barrier entry (%s entering %s): %v", entry, name, err)
-		panic(err)
+		log.Fatalf("Error on barrier entry (%s entering %s): %v", entry, name, err)
 	}
 }
 
@@ -190,11 +186,12 @@ func (c *Coordinator) start(zk *gozk.ZooKeeper) error {
 }
 
 func (c *Coordinator) startWork(workId string, data map[string]interface{}) {
-	if t := data["work"].(string); t == "load" {
+	switch data["work"].(string) {
+	case "load":
 		p := data["path"].(string)
 		c.graph.Load(p)
 		c.enterBarrier("load", p, "")
-	} else if t == "superstep" {
+	case "superstep":
 		step := int(data["step"].(float64))
 
 		c.createBarrier("superstep-"+strconv.Itoa(step), func(m *donut.SafeMap) {
@@ -202,19 +199,13 @@ func (c *Coordinator) startWork(workId string, data map[string]interface{}) {
 		})
 
 		log.Printf("Running superstep %d", step)
-		active, msgs, aggr := c.graph.runSuperstep(step)
-		log.Printf("Step %d stats: %d active verts, %d sent messages", step, active, msgs)
 		stepData := make(map[string]interface{})
-		stepData["active"] = active
-		stepData["msgs"] = msgs
-		stepData["aggr"] = aggr
-		var data []byte
-		var err error
-		if data, err = json.Marshal(stepData); err != nil {
-			panic(err)
-		}
+		stepData["active"], stepData["msgs"], stepData["aggr"] = c.graph.runSuperstep(step)
+		log.Printf("Step %d stats: %d active verts, %d sent messages", step, stepData["active"], stepData["msgs"])
+
+		data, _ := json.Marshal(stepData)
 		c.enterBarrier("superstep-"+strconv.Itoa(step), c.config.NodeId, string(data))
-	} else if t == "write" {
+	case "write":
 		c.createBarrier("write", func(m *donut.SafeMap) {
 			c.onWriteBarrierChange(m)
 		})

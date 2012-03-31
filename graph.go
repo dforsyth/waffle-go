@@ -173,16 +173,15 @@ func (g *Graph) runSuperstep(step int) (int, int, map[string]interface{}) {
 	g.localStat.msgs = 0
 	g.localStat.aggr = make(map[string]interface{})
 
-	log.Printf("ready to compute for step %d", step)
+	log.Printf("Ready to compute for step %d", step)
 	g.compute()
-	log.Printf("done with computation for step %d", step)
+	log.Printf("Done with computation for step %d", step)
 
 	return g.localStat.active, g.localStat.msgs, g.localStat.aggr
 }
 
 func (g *Graph) compute() {
-	log.Printf("computing for %d verts", len(g.vertices))
-	i := 0
+	log.Printf("Computing for %d vertices", len(g.vertices))
 	for _, v := range g.vertices {
 		if msgs, ok := g.messages[v.Id()]; ok || v.Active() {
 			if msgs == nil {
@@ -193,14 +192,9 @@ func (g *Graph) compute() {
 		if v.Active() {
 			g.localStat.active++
 		}
-		i++
-		if i%100 == 0 {
-			log.Printf("have computed %d verts", i)
-		}
 	}
 }
 
 func (g *Graph) Write() error {
-	g.job.Write(g)
-	return nil
+	return g.job.Write(g)
 }
