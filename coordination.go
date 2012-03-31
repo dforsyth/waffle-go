@@ -25,6 +25,13 @@ const (
 	WriteState
 )
 
+const (
+	WorkField     = "work"
+	LoadWork      = "load"
+	SuperstepWork = "superstep"
+	WriteWork     = "write"
+)
+
 type Coordinator struct {
 	// workers
 	workers *donut.SafeMap
@@ -158,6 +165,7 @@ func (c *Coordinator) createBarrier(name string, onChange func(*donut.SafeMap)) 
 		if _, err := c.zk.Create(bPath, "", 0, gozk.WorldACL(gozk.PERM_ALL)); err == nil {
 			log.Printf("Created barrier %s", bPath)
 		} else {
+			// XXX should check to make sure its a "node already exists error"
 			log.Printf("Failed to create barrier %s: %v", bPath, err)
 		}
 		kill, err := watchZKChildren(c.zk, bPath, donut.NewSafeMap(make(map[string]interface{})), onChange)
@@ -186,26 +194,26 @@ func (c *Coordinator) start(zk *gozk.ZooKeeper) error {
 }
 
 func (c *Coordinator) startWork(workId string, data map[string]interface{}) {
-	switch data["work"].(string) {
-	case "load":
+	switch data[WorkField].(string) {
+	case LoadWork:
 		p := data["path"].(string)
 		c.graph.Load(p)
 		c.enterBarrier("load", p, "")
-	case "superstep":
+	case SuperstepWork:
 		step := int(data["step"].(float64))
 
 		c.createBarrier("superstep-"+strconv.Itoa(step), func(m *donut.SafeMap) {
 			c.onStepBarrierChange(step, m)
 		})
 
-		log.Printf("Running superstep %d", step)
+		log.Printf("Superstep %d", step)
 		stepData := make(map[string]interface{})
 		stepData["active"], stepData["msgs"], stepData["aggr"] = c.graph.runSuperstep(step)
 		log.Printf("Step %d stats: %d active verts, %d sent messages", step, stepData["active"], stepData["msgs"])
 
 		data, _ := json.Marshal(stepData)
 		c.enterBarrier("superstep-"+strconv.Itoa(step), c.config.NodeId, string(data))
-	case "write":
+	case WriteWork:
 		c.createBarrier("write", func(m *donut.SafeMap) {
 			c.onWriteBarrierChange(m)
 		})
@@ -345,14 +353,14 @@ func (c *Coordinator) createWriteWork() {
 	log.Printf("creating work for write %s", c.config.NodeId)
 	data := make(map[string]interface{})
 	data[c.clusterName] = c.config.NodeId
-	data["work"] = "write"
+	data[WorkField] = WriteWork
 	donut.CreateWork(c.clusterName, c.zk, c.donutConfig, "write-"+c.config.NodeId, data)
 }
 
 func (c *Coordinator) createLoadWork() {
 	log.Println("creating load work")
 	data := make(map[string]interface{})
-	data["work"] = "load"
+	data[WorkField] = LoadWork
 	paths := c.graph.job.LoadPaths()
 	// create the load barrier here since a node might not end up with load work
 	c.createBarrier("load", func(m *donut.SafeMap) {
@@ -361,7 +369,10 @@ func (c *Coordinator) createLoadWork() {
 	for _, p := range paths {
 		data["path"] = p
 		workName := "load-" + p
-		donut.CreateWork(c.clusterName, c.zk, c.donutConfig, workName, data)
+		if err := donut.CreateWork(c.clusterName, c.zk, c.donutConfig, workName, data); err != nil {
+			// XXX should check to make sure its a "node already exists error"
+			log.Printf("Could not create load work for %s: %v", p, err)
+		}
 	}
 }
 
@@ -369,7 +380,7 @@ func (c *Coordinator) createStepWork(step int) {
 	log.Printf("creating work for superstep %d", step)
 	data := make(map[string]interface{})
 	data[c.clusterName] = c.config.NodeId
-	data["work"] = "superstep"
+	data[WorkField] = SuperstepWork
 	data["step"] = step
 	donut.CreateWork(c.clusterName, c.zk, c.donutConfig, "superstep-"+strconv.Itoa(step)+"-"+c.config.NodeId, data)
 }
