@@ -198,3 +198,7 @@ func (g *Graph) compute() {
 func (g *Graph) Write() error {
 	return g.job.Write(g)
 }
+
+func (g *Graph) information() map[string]interface{} {
+	return make(map[string]interface{})
+}
