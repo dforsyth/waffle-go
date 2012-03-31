@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/gob"
 	"errors"
+	"flag"
 	"io"
 	"io/ioutil"
 	"log"
@@ -173,12 +174,20 @@ func main() {
 	gob.Register(&MVVertex{})
 	gob.Register(&MVMessage{})
 	gob.Register(&MVEdge{})
+
+	workers := flag.Int("workers", 1, "number of workers")
+	nodeId := flag.String("nodeId", "node", "node identifier")
+	zkServers := flag.String("zkServers", "", "zk servers to connect to")
+	rpcHost := flag.String("rpcHost", "localhost", "rpc host for this worker")
+	rpcPort := flag.String("rpcPort", "6000", "rpc port for this worker")
+	flag.Parse()
+
 	config := &waffle.Config{
-		InitialWorkers: 2,
-		NodeId:         os.Args[1],
-		ZKServers:      "192.168.1.101:50000",
-		RPCHost:        "192.168.1.101",
-		RPCPort:        "5000",
+		InitialWorkers: *workers,
+		NodeId:         *nodeId,
+		ZKServers:      *zkServers,
+		RPCHost:        *rpcHost,
+		RPCPort:        *rpcPort,
 	}
 	waffle.Run(config, &MVJob{})
 }
