@@ -9,6 +9,7 @@ type Config struct {
 	JobId            string
 	InitialWorkers   int
 	RPCHost, RPCPort string
+	ZKServers        string
 }
 
 func Run(c *Config, j Job) {
@@ -20,12 +21,13 @@ func Run(c *Config, j Job) {
 	}
 	balancer := &waffleBalancer{}
 	config := donut.NewConfig()
-	config.Servers = "localhost:50000"
+	config.Servers = c.ZKServers
 	config.NodeId = c.NodeId
 	config.Timeout = 1 * 1e9
 
 	cluster := donut.NewCluster(clusterName, config, balancer, listener)
 
+	listener.cluster = cluster
 	listener.done = make(chan byte)
 	listener.config = config
 	listener.coordinator.done = listener.done
@@ -35,9 +37,6 @@ func Run(c *Config, j Job) {
 
 const (
 	BarriersPath = "barriers"
-	// JoinablePath = "joinable"
-	// ReadyPath    = "ready"
-	LockPath    = "lock"
-	WorkersPath = "workers"
-	// coordinator = "coordinator"
+	LockPath     = "lock"
+	WorkersPath  = "workers"
 )

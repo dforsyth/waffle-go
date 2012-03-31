@@ -11,14 +11,16 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 	"waffle"
 )
 
 type MVJob struct {
+	JobId string
 }
 
 func (j *MVJob) Id() string {
-	return "MVJob"
+	return j.JobId
 }
 
 func (j *MVJob) LoadPaths() (paths []string) {
@@ -176,6 +178,9 @@ func main() {
 	config := &waffle.Config{
 		InitialWorkers: 2,
 		NodeId:         os.Args[1],
+		ZKServers:      "localhost:50000",
+		RPCHost:        "localhost",
+		RPCPort:        "500" + os.Args[1],
 	}
-	waffle.Run(config, &MVJob{})
+	waffle.Run(config, &MVJob{JobId: "MVJob-" + time.Now().String()})
 }

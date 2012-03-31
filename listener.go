@@ -11,11 +11,12 @@ type waffleListener struct {
 
 	clusterName string
 
-	graph  *Graph
-	done   chan byte
-	zk     *gozk.ZooKeeper
-	job    Job
-	config *donut.Config
+	graph   *Graph
+	done    chan byte
+	zk      *gozk.ZooKeeper
+	job     Job
+	config  *donut.Config
+	cluster *donut.Cluster
 }
 
 func (l *waffleListener) OnJoin(zk *gozk.ZooKeeper) {
@@ -24,7 +25,9 @@ func (l *waffleListener) OnJoin(zk *gozk.ZooKeeper) {
 	l.graph = newGraph(l.job, l.coordinator)
 	l.coordinator.graph = l.graph
 	l.coordinator.donutConfig = l.config
-	l.coordinator.start(zk)
+	if err := l.coordinator.start(zk); err != nil {
+		l.cluster.Shutdown()
+	}
 }
 
 func (l *waffleListener) StartWork(workId string, data map[string]interface{}) {

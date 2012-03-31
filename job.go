@@ -7,5 +7,4 @@ type Job interface {
 	Checkpoint(int) bool
 	Write(*Graph) error
 	Persist(*Graph) error
-	// Compute(g, v, m)
 }
