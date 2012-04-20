@@ -5,16 +5,10 @@ import (
 )
 
 type waffleBalancer struct {
-	l *waffleListener
 }
 
-func (b *waffleBalancer) Init(l donut.Listener) {
-	b.l = l.(*waffleListener)
+func (b *waffleBalancer) Init(l *donut.Cluster) {
 }
-
-func (b *waffleBalancer) AddWork(id string) {}
-
-func (b *waffleBalancer) RemoveWork(string) {}
 
 func (b *waffleBalancer) CanClaim() bool {
 	return true
