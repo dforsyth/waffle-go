@@ -1,2 +1,2 @@
 Waffle is a distributed graph processing framework based on Google's Pregel
-paper.  It's built on top of donuts (github.com/dforsyth/donut)
+paper.  It's built on top of donut (github.com/dforsyth/donut).
