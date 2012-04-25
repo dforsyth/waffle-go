@@ -2,14 +2,14 @@ package waffle
 
 import (
 	"donut"
-	"gozk"
+	"launchpad.net/gozk/zookeeper"
 	"log"
 )
 
 // XXX pulled this out of donut, maybe i should make a zk util lib?
 // Watch the children at path until a byte is sent on the returned channel
 // Uses the SafeMap more like a set, so you'll have to use Contains() for entries
-func watchZKChildren(zk *gozk.ZooKeeper, path string, children *donut.SafeMap, onChange func(*donut.SafeMap)) (chan byte, error) {
+func watchZKChildren(zk *zookeeper.Conn, path string, children *donut.SafeMap, onChange func(*donut.SafeMap)) (chan byte, error) {
 	initial, _, watch, err := zk.ChildrenW(path)
 	if err != nil {
 		return nil, err

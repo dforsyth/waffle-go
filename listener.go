@@ -2,7 +2,7 @@ package waffle
 
 import (
 	"donut"
-	"gozk"
+	"launchpad.net/gozk/zookeeper"
 	"log"
 )
 
@@ -12,13 +12,13 @@ type waffleListener struct {
 	clusterName string
 
 	done    chan byte
-	zk      *gozk.ZooKeeper
+	zk      *zookeeper.Conn
 	job     Job
 	config  *donut.Config
 	cluster *donut.Cluster
 }
 
-func (l *waffleListener) OnJoin(zk *gozk.ZooKeeper) {
+func (l *waffleListener) OnJoin(zk *zookeeper.Conn) {
 	log.Println("waffle onjoin")
 	l.zk = zk
 	l.coordinator.graph = newGraph(l.job, l.coordinator)

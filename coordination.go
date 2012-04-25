@@ -4,7 +4,7 @@ import (
 	"donut"
 	"encoding/json"
 	"errors"
-	"gozk"
+	"launchpad.net/gozk/zookeeper"
 	"log"
 	"net"
 	"net/http"
@@ -43,7 +43,7 @@ type Coordinator struct {
 	// TODO: make this a map of partition to graph so that we can pick up partitions from failed workers
 	graph *Graph
 
-	zk                                            *gozk.ZooKeeper
+	zk                                            *zookeeper.Conn
 	watchers                                      map[string]chan byte
 	basePath, lockPath, barriersPath, workersPath string
 
@@ -77,9 +77,9 @@ func (c *Coordinator) createPaths() {
 	c.workersPath = path.Join(c.basePath, WorkersPath)
 	c.barriersPath = path.Join(c.basePath, BarriersPath)
 
-	c.zk.Create(c.basePath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
-	c.zk.Create(c.workersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
-	c.zk.Create(c.barriersPath, "", 0, gozk.WorldACL(gozk.PERM_ALL))
+	c.zk.Create(c.basePath, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	c.zk.Create(c.workersPath, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	c.zk.Create(c.barriersPath, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL))
 }
 
 func (c *Coordinator) setup() {
@@ -144,11 +144,11 @@ func (c *Coordinator) sendMessage(m Message, pid int) error {
 
 func (c *Coordinator) register() {
 	for {
-		if _, err := c.zk.Create(c.lockPath, "", gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
+		if _, err := c.zk.Create(c.lockPath, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL)); err != nil {
 			defer c.zk.Delete(c.lockPath, -1)
 			if c.workers.Len() < c.config.InitialWorkers {
 				info := c.info()
-				if _, err := c.zk.Create(path.Join(c.workersPath, c.config.NodeId), info, gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
+				if _, err := c.zk.Create(path.Join(c.workersPath, c.config.NodeId), info, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL)); err != nil {
 					log.Fatalln(err)
 				}
 				return
@@ -162,7 +162,7 @@ func (c *Coordinator) register() {
 func (c *Coordinator) createBarrier(name string, onChange func(*donut.SafeMap)) {
 	bPath := path.Join(c.barriersPath, name)
 	if _, ok := c.watchers[bPath]; !ok {
-		if _, err := c.zk.Create(bPath, "", 0, gozk.WorldACL(gozk.PERM_ALL)); err == nil {
+		if _, err := c.zk.Create(bPath, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL)); err == nil {
 			log.Printf("Created barrier %s", bPath)
 		} else {
 			// XXX should check to make sure its a "node already exists error"
@@ -178,12 +178,12 @@ func (c *Coordinator) createBarrier(name string, onChange func(*donut.SafeMap)) 
 
 func (c *Coordinator) enterBarrier(name, entry, data string) {
 	log.Printf("Entering barrier %s as %s", name, entry)
-	if _, err := c.zk.Create(path.Join(c.barriersPath, name, entry), data, gozk.EPHEMERAL, gozk.WorldACL(gozk.PERM_ALL)); err != nil {
+	if _, err := c.zk.Create(path.Join(c.barriersPath, name, entry), data, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL)); err != nil {
 		log.Fatalf("Error on barrier entry (%s entering %s): %v", entry, name, err)
 	}
 }
 
-func (c *Coordinator) start(zk *gozk.ZooKeeper) error {
+func (c *Coordinator) start(zk *zookeeper.Conn) error {
 	if !atomic.CompareAndSwapInt32(&c.state, NewState, SetupState) {
 		return errors.New("Error moving from NewState to SetupState")
 	}
