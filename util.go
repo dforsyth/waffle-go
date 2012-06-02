@@ -1,7 +1,7 @@
 package waffle
 
 import (
-	"donut"
+	"github.com/dforsyth/donut"
 	"launchpad.net/gozk/zookeeper"
 	"log"
 )

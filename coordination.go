@@ -1,9 +1,9 @@
 package waffle
 
 import (
-	"donut"
 	"encoding/json"
 	"errors"
+	"github.com/dforsyth/donut"
 	"launchpad.net/gozk/zookeeper"
 	"log"
 	"net"
